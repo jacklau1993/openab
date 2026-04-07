@@ -181,4 +181,15 @@ entries:
     urls:
     - https://github.com/thepagent/agent-broker/releases/download/agent-broker-0.1.1/agent-broker-0.1.1.tgz
     version: 0.1.1
-generated: "2026-04-06T06:39:21.263040534Z"
+  openab:
+  - apiVersion: v2
+    appVersion: dd7e1ca
+    created: "2026-04-07T03:28:29.714100278Z"
+    description: Discord ↔ ACP coding CLI bridge (Kiro CLI, Claude Code, Codex, Gemini)
+    digest: 719d645a3cdb20408dd73322b77ad80234e14ae1ac0a776d6458370a6be6cdb9
+    name: openab
+    type: application
+    urls:
+    - https://github.com/openabdev/openab/releases/download/openab-0.3.3/openab-0.3.3.tgz
+    version: 0.3.3
+generated: "2026-04-07T03:28:29.714164518Z"

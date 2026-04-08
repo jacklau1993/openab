@@ -147,6 +147,41 @@ agents:
         - "YOUR_CHANNEL_ID"
 ```
 
+## Codex Only Example (values.yaml)
+
+```yaml
+agents:
+  kiro:
+    enabled: false
+  codex:
+    image: ghcr.io/openabdev/openab-codex:78f8d2c
+    command: codex-acp
+    workingDir: /home/node
+    discord:
+      botToken: ""  # set via --set or external secret
+      allowedChannels:
+        - "YOUR_CHANNEL_ID"
+```
+
+## Gemini Only Example (values.yaml)
+
+```yaml
+agents:
+  kiro:
+    enabled: false
+  gemini:
+    image: ghcr.io/openabdev/openab-gemini:78f8d2c
+    command: gemini
+    args: ["--acp"]
+    workingDir: /home/node
+    discord:
+      botToken: ""  # set via --set or external secret
+      allowedChannels:
+        - "YOUR_CHANNEL_ID"
+    env:
+      GEMINI_API_KEY: "${GEMINI_API_KEY}"
+```
+
 ## Multi-Agent Example (values.yaml)
 
 ```yaml

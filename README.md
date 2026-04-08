@@ -1,10 +1,10 @@
-# agent-broker Helm Chart
+# openab Helm Chart
 
-A Helm chart for deploying [agent-broker](https://github.com/thepagent/agent-broker) — a Rust bridge service between Discord and any ACP-compatible coding CLI (Kiro CLI, Claude Code, Codex, Gemini, etc.).
+A Helm chart for deploying [openab](https://github.com/openabdev/openab) — a lightweight, secure, cloud-native ACP harness that bridges Discord and any ACP-compatible coding CLI (Kiro CLI, Claude Code, Codex, Gemini, etc.).
 
 ```
 ┌──────────────┐  Gateway WS   ┌──────────────┐  ACP stdio    ┌──────────────┐
-│   Discord    │◄─────────────►│ agent-broker │──────────────►│  coding CLI  │
+│   Discord    │◄─────────────►│    openab    │──────────────►│  coding CLI  │
 │   User       │               │   (Rust)     │◄── JSON-RPC ──│  (acp mode)  │
 └──────────────┘               └──────────────┘               └──────────────┘
 ```
@@ -13,174 +13,168 @@ A Helm chart for deploying [agent-broker](https://github.com/thepagent/agent-bro
 
 - Kubernetes 1.21+
 - Helm 3.0+
-- A Discord bot token ([setup guide](https://github.com/thepagent/agent-broker/blob/main/docs/discord-bot-howto.md))
+- A Discord bot token ([setup guide](https://github.com/openabdev/openab/blob/main/docs/discord-bot-howto.md))
 
 ## Installation
 
-##### Helm Repository (GitHub Pages)
-
 ```bash
-helm repo add agent-broker https://thepagent.github.io/agent-broker
+helm repo add openab https://openabdev.github.io/openab
 helm repo update
 ```
 
 ```bash
-helm install agent-broker agent-broker/agent-broker \
-  --set discord.botToken="YOUR_BOT_TOKEN" \
-  --set discord.allowedChannels[0]="YOUR_CHANNEL_ID"
+# Kiro CLI (single agent)
+helm install openab openab/openab \
+  --set agents.kiro.discord.botToken="$DISCORD_BOT_TOKEN" \
+  --set-string agents.kiro.discord.allowedChannels[0]="YOUR_CHANNEL_ID"
 ```
 
-##### OCI Registry
+> ⚠️ Always use `--set-string` for channel IDs to avoid float64 precision loss.
+
+## Multi-Agent
+
+One Helm release can run multiple agents simultaneously — each gets its own Deployment, ConfigMap, Secret, and PVC.
 
 ```bash
-helm install agent-broker oci://ghcr.io/thepagent/agent-broker \
-  --version 0.1.8 \
-  --set discord.botToken="YOUR_BOT_TOKEN" \
-  --set discord.allowedChannels[0]="YOUR_CHANNEL_ID"
-```
+# Codex
+helm install openab openab/openab \
+  --set agents.codex.command=codex-acp \
+  --set agents.codex.discord.botToken="$DISCORD_BOT_TOKEN" \
+  --set-string agents.codex.discord.allowedChannels[0]="YOUR_CHANNEL_ID"
 
-##### Using a values file
+# Claude Code
+helm install openab openab/openab \
+  --set agents.claude.command=claude-agent-acp \
+  --set agents.claude.discord.botToken="$DISCORD_BOT_TOKEN" \
+  --set-string agents.claude.discord.allowedChannels[0]="YOUR_CHANNEL_ID"
 
-```bash
-helm install agent-broker agent-broker/agent-broker -f my-values.yaml
+# Gemini
+helm install openab openab/openab \
+  --set agents.gemini.command=gemini \
+  --set 'agents.gemini.args[0]=--acp' \
+  --set agents.gemini.discord.botToken="$DISCORD_BOT_TOKEN" \
+  --set-string agents.gemini.discord.allowedChannels[0]="YOUR_CHANNEL_ID"
 ```
 
 ## Upgrade
 
 ```bash
-helm upgrade agent-broker agent-broker/agent-broker -f my-values.yaml
-```
-
-Or with OCI:
-
-```bash
-helm upgrade agent-broker oci://ghcr.io/thepagent/agent-broker --version 0.1.8 -f my-values.yaml
+helm upgrade openab openab/openab -f my-values.yaml
 ```
 
 ## Values Reference
 
+Each agent is configured under `agents.<name>`:
+
 | Key | Default | Description |
 |-----|---------|-------------|
-| `image.repository` | `ghcr.io/thepagent/agent-broker` | Container image repository |
-| `image.tag` | `fea0445` | Container image tag |
+| `image.repository` | `ghcr.io/openabdev/openab` | Container image repository |
+| `image.tag` | `""` | Container image tag |
 | `image.pullPolicy` | `IfNotPresent` | Image pull policy |
-| `replicas` | `1` | Number of replicas |
-| `strategy.type` | `Recreate` | Deployment strategy |
-| `discord.botToken` | `""` | Discord bot token (use `--set` or external secret) |
-| `discord.allowedChannels` | `[]` | List of Discord channel IDs to listen on |
-| `agent.command` | `kiro-cli` | CLI command to run as agent |
-| `agent.args` | `["acp", "--trust-all-tools"]` | Arguments passed to the agent CLI |
-| `agent.workingDir` | `/home/agent` | Working directory for the agent process |
-| `agent.env` | `{}` | Extra environment variables passed to the agent |
-| `pool.maxSessions` | `10` | Maximum concurrent sessions |
-| `pool.sessionTtlHours` | `24` | Idle session TTL in hours |
-| `reactions.enabled` | `true` | Enable emoji status reactions |
-| `reactions.removeAfterReply` | `false` | Remove reactions after bot replies |
-| `persistence.enabled` | `true` | Enable PVC for auth token persistence |
-| `persistence.storageClass` | `""` | Storage class (empty = cluster default) |
-| `persistence.size` | `1Gi` | PVC size |
-| `agentsMd` | `""` | Content to inject as `/home/agent/AGENTS.md` |
-| `resources` | `{}` | Container resource requests/limits |
-| `env` | `{}` | Extra environment variables for the broker process |
-| `envFrom` | `[]` | Extra envFrom sources (ConfigMap / Secret refs) |
-| `nodeSelector` | `{}` | Node selector |
-| `tolerations` | `[]` | Tolerations |
-| `affinity` | `{}` | Affinity rules |
+| `agents.<name>.command` | `kiro-cli` | CLI command to run as agent |
+| `agents.<name>.args` | `["acp", "--trust-all-tools"]` | Arguments passed to the agent CLI |
+| `agents.<name>.workingDir` | `/home/agent` | Working directory for the agent process |
+| `agents.<name>.discord.botToken` | `""` | Discord bot token |
+| `agents.<name>.discord.allowedChannels` | `[]` | List of Discord channel IDs |
+| `agents.<name>.env` | `{}` | Extra environment variables for the agent |
+| `agents.<name>.envFrom` | `[]` | Extra envFrom sources (ConfigMap / Secret refs) |
+| `agents.<name>.pool.maxSessions` | `10` | Maximum concurrent sessions |
+| `agents.<name>.pool.sessionTtlHours` | `24` | Idle session TTL in hours |
+| `agents.<name>.reactions.enabled` | `true` | Enable emoji status reactions |
+| `agents.<name>.reactions.removeAfterReply` | `false` | Remove reactions after bot replies |
+| `agents.<name>.persistence.enabled` | `true` | Enable PVC for auth token persistence |
+| `agents.<name>.persistence.storageClass` | `""` | Storage class (empty = cluster default) |
+| `agents.<name>.persistence.size` | `1Gi` | PVC size |
+| `agents.<name>.agentsMd` | `""` | Content injected as `/home/agent/AGENTS.md` |
+| `agents.<name>.resources` | `{}` | Container resource requests/limits |
+| `agents.<name>.nodeSelector` | `{}` | Node selector |
+| `agents.<name>.tolerations` | `[]` | Tolerations |
+| `agents.<name>.affinity` | `{}` | Affinity rules |
 
 ## Example values.yaml
 
 ```yaml
-image:
-  repository: ghcr.io/thepagent/agent-broker
-  tag: "fea0445"
-
-discord:
-  botToken: ""  # set via --set or external secret
-  allowedChannels:
-    - "1234567890123456789"
-
-agent:
-  command: kiro-cli
-  args:
-    - acp
-    - --trust-all-tools
-  workingDir: /home/agent
-  env: {}
-    # ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
-
-pool:
-  maxSessions: 10
-  sessionTtlHours: 24
-
-reactions:
-  enabled: true
-  removeAfterReply: false
-
-persistence:
-  enabled: true
-  storageClass: ""
-  size: 1Gi
-
-# Optional: inject AGENTS.md into /home/agent/AGENTS.md
-agentsMd: |
-  IDENTITY - your agent identity
-  SOUL - your agent personality
-  USER - how agent should address the user
+agents:
+  kiro:
+    command: kiro-cli
+    args: [acp, --trust-all-tools]
+    discord:
+      botToken: ""  # set via --set or external secret
+      allowedChannels:
+        - "1234567890123456789"
+    workingDir: /home/agent
+    pool:
+      maxSessions: 10
+      sessionTtlHours: 24
+    reactions:
+      enabled: true
+      removeAfterReply: false
+    persistence:
+      enabled: true
+      storageClass: ""
+      size: 1Gi
+    agentsMd: |
+      IDENTITY - your agent identity
+      SOUL - your agent personality
+      USER - how agent should address the user
 ```
 
-## Agent Backends
-
-Swap the `agent` block to use any ACP-compatible CLI:
+## Multi-Agent Example (values.yaml)
 
 ```yaml
-# Kiro CLI (default)
-agent:
-  command: kiro-cli
-  args: ["acp", "--trust-all-tools"]
+agents:
+  kiro:
+    command: kiro-cli
+    args: [acp, --trust-all-tools]
+    discord:
+      botToken: "${DISCORD_BOT_TOKEN}"
+      allowedChannels: ["YOUR_KIRO_CHANNEL_ID"]
+    persistence:
+      enabled: true
+  claude:
+    command: claude-agent-acp
+    args: []
+    discord:
+      botToken: "${DISCORD_BOT_TOKEN}"
+      allowedChannels: ["YOUR_CLAUDE_CHANNEL_ID"]
+    persistence:
+      enabled: true
+```
 
-# Claude Code
-agent:
-  command: claude
-  args: ["--acp"]
-  env:
-    ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY}"
+## Post-Install: Authenticate
+
+Each agent requires a one-time auth. The PVC persists tokens across pod restarts.
+
+```bash
+# Kiro CLI
+kubectl exec -it deployment/openab-kiro -- kiro-cli login --use-device-flow
 
 # Codex
-agent:
-  command: codex
-  args: ["--acp"]
-  env:
-    OPENAI_API_KEY: "${OPENAI_API_KEY}"
+kubectl exec -it deployment/openab-codex -- codex login --device-auth
+
+# Claude Code
+kubectl exec -it deployment/openab-claude -- claude setup-token
+# Then: helm upgrade openab openab/openab --set agents.claude.env.CLAUDE_CODE_OAUTH_TOKEN="<token>"
 
 # Gemini
-agent:
-  command: gemini
-  args: ["--acp"]
-  env:
-    GEMINI_API_KEY: "${GEMINI_API_KEY}"
+kubectl exec -it deployment/openab-gemini -- gemini
+# Or: helm upgrade openab openab/openab --set agents.gemini.env.GEMINI_API_KEY="<key>"
 ```
 
-## Post-Install: Authenticate kiro-cli
-
-kiro-cli requires a one-time OAuth login. The PVC persists tokens across pod restarts.
+Restart after auth:
 
 ```bash
-kubectl exec -it deployment/agent-broker -- kiro-cli login --use-device-flow
-```
-
-Follow the device code flow in your browser, then restart the pod:
-
-```bash
-kubectl rollout restart deployment/agent-broker
+kubectl rollout restart deployment/openab-<agent>
 ```
 
 ## Uninstall
 
 ```bash
-helm uninstall agent-broker
+helm uninstall openab
 ```
 
-> **Note:** The PVC is not deleted automatically. To remove it:
+> **Note:** Secrets with `helm.sh/resource-policy: keep` and PVCs are not deleted automatically. To remove them:
 > ```bash
-> kubectl delete pvc agent-broker
+> kubectl delete secret openab-kiro
+> kubectl delete pvc openab-kiro
 > ```

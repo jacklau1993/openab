@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Version tag (e.g. v0.7.0-rc.1 or v0.7.0)'
+        description: 'Version tag (e.g. v0.7.0-beta.1 or v0.7.0)'
         required: true
         type: string
         default: 'v'
@@ -46,7 +46,7 @@ jobs:
 
           CHART_VERSION="${TAG#v}"
 
-          # Pre-release if version contains '-' (e.g. 0.7.0-rc.1)
+          # Pre-release if version contains '-' (e.g. 0.7.0-beta.1)
           if [[ "$CHART_VERSION" == *-* ]]; then
             IS_PRERELEASE="true"
           else
@@ -197,7 +197,7 @@ jobs:
         id: find-prerelease
         run: |
           CHART_VERSION="${{ needs.resolve-tag.outputs.chart_version }}"
-          # Find latest pre-release tag matching this version (e.g. v0.7.0-rc.1)
+          # Find latest pre-release tag matching this version (e.g. v0.7.0-beta.1)
           PRERELEASE_TAG=$(git tag -l "v${CHART_VERSION}-*" --sort=-v:refname | head -1)
           if [ -z "$PRERELEASE_TAG" ]; then
             echo "::error::No pre-release tag found for v${CHART_VERSION}-*. Run a pre-release build first."

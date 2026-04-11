@@ -6,10 +6,10 @@ Versions follow SemVer (e.g. `0.7.0`). Version bumps are controlled via `workflo
 
 | Method | 效果 | 範例 |
 |---|---|---|
-| Auto patch (default) | patch bump + rc | `0.6.0 → 0.6.1-rc.1` |
-| Auto minor | minor bump + rc | `0.6.0 → 0.7.0-rc.1` |
-| Auto major | major bump + rc | `0.6.0 → 1.0.0-rc.1` |
-| Manual | 自行指定 | `0.8.0-rc.1` or `0.8.0` |
+| Auto patch (default) | patch bump + beta | `0.6.0 → 0.6.1-beta.1` |
+| Auto minor | minor bump + beta | `0.6.0 → 0.7.0-beta.1` |
+| Auto major | major bump + beta | `0.6.0 → 1.0.0-beta.1` |
+| Manual | 自行指定 | `0.8.0-beta.1` or `0.8.0` |
 
 ## Release Flow (Tag-Driven)
 
@@ -22,12 +22,12 @@ Versions follow SemVer (e.g. `0.7.0`). Version bumps are controlled via `workflo
   ┌─────────────────────────────────────────────────────────────────┐
   │ Maintainer 到 Actions → Release PR → Run workflow                │
   │                                                                  │
-  │   選項 A: 留空 version，選 bump type → 自動算 (e.g. 0.7.0-rc.1) │
-  │   選項 B: 手動填 version (e.g. 0.8.0-rc.1 or 0.8.0)            │
+  │   選項 A: 留空 version，選 bump type → 自動算 (e.g. 0.7.0-beta.1) │
+  │   選項 B: 手動填 version (e.g. 0.8.0-beta.1 or 0.8.0)            │
   │                                                                  │
   │ → release-pr.yml 觸發                                            │
   │ → 更新 Cargo.toml + Chart.yaml version/appVersion               │
-  │ → 建立 Release PR (branch: release/v0.7.0-rc.1)                 │
+  │ → 建立 Release PR (branch: release/v0.7.0-beta.1)                 │
   └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -38,10 +38,10 @@ Versions follow SemVer (e.g. `0.7.0`). Version bumps are controlled via `workflo
   │ Maintainer review & merge Release PR                             │
   │                                                                  │
   │ → tag-on-merge.yml 偵測 release/ branch merge                   │
-  │ → 自動打 tag (e.g. v0.7.0-rc.1)                                 │
+  │ → 自動打 tag (e.g. v0.7.0-beta.1)                                 │
   │ → build.yml 觸發 (is_prerelease=true)                            │
   │ → build-image:    4 variants × 2 platforms (amd64 + arm64)      │
-  │ → merge-manifests: image tags = <sha> + 0.7.0-rc.1              │
+  │ → merge-manifests: image tags = <sha> + 0.7.0-beta.1              │
   │ → release-chart:  helm chart → OCI registry                      │
   └─────────────────────────────────────────────────────────────────┘
         │
@@ -51,10 +51,10 @@ Versions follow SemVer (e.g. `0.7.0`). Version bumps are controlled via `workflo
   │                                                                  │
   │   helm install openab \                                          │
   │     oci://ghcr.io/openabdev/charts/openab \                      │
-  │     --version 0.7.0-rc.1                                         │
+  │     --version 0.7.0-beta.1                                         │
   │                                                                  │
   │ 發現 bug？→ 修復 PR merge → 再跑一次 Release PR workflow          │
-  │   → 手動指定 v0.7.0-rc.2 → merge → 重新測試                      │
+  │   → 手動指定 v0.7.0-beta.2 → merge → 重新測試                      │
   └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -69,9 +69,9 @@ Versions follow SemVer (e.g. `0.7.0`). Version bumps are controlled via `workflo
   │                                                                  │
   │ → build.yml 觸發 (is_prerelease=false)                           │
   │ → promote-stable:                                                │
-  │   1. 找到最新的 pre-release tag (v0.7.0-rc.2)                    │
+  │   1. 找到最新的 pre-release tag (v0.7.0-beta.2)                    │
   │   2. 驗證 pre-release image 存在                                  │
-  │   3. re-tag 0.7.0-rc.2 → 0.7.0 / 0.7 / latest                  │
+  │   3. re-tag 0.7.0-beta.2 → 0.7.0 / 0.7 / latest                  │
   │   ⚠️ 不 rebuild，跟 pre-release 是同一個 artifact                 │
   │ → release-chart: helm chart → OCI registry                       │
   └─────────────────────────────────────────────────────────────────┘
@@ -92,21 +92,21 @@ Versions follow SemVer (e.g. `0.7.0`). Version bumps are controlled via `workflo
 ```bash
 # ── Pre-release ───────────────────────────────────────
 # 到 Actions → Release PR → Run workflow
-# 留空 version，選 patch → 自動算 0.7.0-rc.1
-# 或手動填 version: 0.7.0-rc.1
+# 留空 version，選 patch → 自動算 0.7.0-beta.1
+# 或手動填 version: 0.7.0-beta.1
 # → merge 產生的 Release PR → 自動打 tag → build
 
-# ── 第二輪 pre-release（rc.1 有 bug 時）─────────────
+# ── 第二輪 pre-release（beta.1 有 bug 時）─────────────
 # 修 bug → PR merge to main
-# 再跑 Release PR workflow，手動填 version: 0.7.0-rc.2
+# 再跑 Release PR workflow，手動填 version: 0.7.0-beta.2
 # → merge → 自動打 tag → build
 
 # ── Stable release ────────────────────────────────────
 # 跑 Release PR workflow，手動填 version: 0.7.0
-# → merge → 自動打 tag → promote rc image (不 rebuild)
+# → merge → 自動打 tag → promote beta image (不 rebuild)
 
 # ── 手動重跑（build 失敗時）──────────────────────────
-gh workflow run build.yml -f tag=v0.7.0-rc.1
+gh workflow run build.yml -f tag=v0.7.0-beta.1
 gh workflow run build.yml -f tag=v0.7.0
 ```
 
@@ -151,10 +151,10 @@ ghcr.io/openabdev/openab-gemini   # gemini
 
 Image tags 依 release 類型不同：
 
-| Tag | Stable (`v0.7.0`) | Pre-release (`v0.7.0-rc.1`) |
+| Tag | Stable (`v0.7.0`) | Pre-release (`v0.7.0-beta.1`) |
 |---|---|---|
 | `<sha>` | v (from pre-release) | v |
-| `0.7.0` / `0.7.0-rc.1` | v | v |
+| `0.7.0` / `0.7.0-beta.1` | v | v |
 | `0.7` | v | x |
 | `latest` | v | x |
 
@@ -179,7 +179,7 @@ helm install openab oci://ghcr.io/openabdev/charts/openab --version 0.7.0
 | 時機 | 做什麼 |
 |---|---|
 | 準備 release | Actions → Release PR → Run workflow |
-| 需要 rc 測試 | 指定 version 如 `0.7.0-rc.1` |
+| 需要 beta 測試 | 指定 version 如 `0.7.0-beta.1` |
 | 測試通過 | 指定 stable version 如 `0.7.0` → promote |
 | build 失敗或需重跑 | `gh workflow run build.yml -f tag=<tag>` |
 

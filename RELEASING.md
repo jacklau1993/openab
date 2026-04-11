@@ -176,6 +176,23 @@ helm install openab oci://ghcr.io/openabdev/charts/openab --version 0.7.0
 | 測試通過 | Merge Release PR（tagpr 打 stable tag → 自動 promote） |
 | build 失敗或需重跑 | `gh workflow run build.yml -f tag=<tag>` |
 
+## GitHub App 權限
+
+tagpr 使用 GitHub App token 來推送 tag 和建立 Release PR。App 需要以下 Repository permissions：
+
+| Permission | Access |
+|---|---|
+| Actions | Read and write |
+| Commit statuses | Read-only |
+| Contents | Read and write |
+| Issues | Read and write |
+| Merge queues | Read and write |
+| Metadata | Read-only (mandatory) |
+| Packages | Read and write |
+| Pull requests | Read and write |
+
+對應的 secrets：`APP_ID`（Client ID）、`APP_PRIVATE_KEY`。
+
 ## 限制與注意事項
 
 - **Stable release 必須先有 pre-release**：promote-stable 會查找 `v{version}-*` 的 pre-release tag，找不到就失敗

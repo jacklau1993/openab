@@ -92,6 +92,7 @@ async fn main() -> anyhow::Result<()> {
                 allowed_users,
                 reactions_config: cfg.reactions,
                 stt_config: cfg.stt.clone(),
+                markdown_config: cfg.markdown,
             };
 
             let intents = GatewayIntents::GUILD_MESSAGES
@@ -130,50 +131,6 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
     }
-
-    let handler = discord::Handler {
-        pool: pool.clone(),
-        allowed_channels,
-        allowed_users,
-        reactions_config: cfg.reactions,
-        stt_config: cfg.stt.clone(),
-        markdown_config: cfg.markdown,
-    };
-
-    let intents = GatewayIntents::GUILD_MESSAGES
-        | GatewayIntents::MESSAGE_CONTENT
-        | GatewayIntents::GUILDS;
-
-    let mut client = Client::builder(&cfg.discord.bot_token, intents)
-        .event_handler(handler)
-        .await?;
-
-    // Spawn cleanup task
-    let cleanup_pool = pool.clone();
-    let cleanup_handle = tokio::spawn(async move {
-        loop {
-            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-            cleanup_pool.cleanup_idle(ttl_secs).await;
-        }
-    });
-
-    // Run bot until SIGINT/SIGTERM
-    let shard_manager = client.shard_manager.clone();
-    let shutdown_pool = pool.clone();
-    tokio::spawn(async move {
-        tokio::signal::ctrl_c().await.ok();
-        info!("shutdown signal received");
-        shard_manager.shutdown_all().await;
-    });
-
-    info!("starting discord bot");
-    client.start().await?;
-
-    // Cleanup
-    cleanup_handle.abort();
-    shutdown_pool.shutdown().await;
-    info!("openab shut down");
-    Ok(())
 }
 
 fn parse_id_set(raw: &[String], label: &str) -> anyhow::Result<HashSet<u64>> {

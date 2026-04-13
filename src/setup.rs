@@ -10,7 +10,6 @@ use std::path::{Path, PathBuf};
 const C: Colors = Colors {
     reset: "\x1b[0m",
     bold: "\x1b[1m",
-    dim: "\x1b[2m",
     cyan: "\x1b[36m",
     green: "\x1b[32m",
     red: "\x1b[31m",
@@ -21,7 +20,6 @@ const C: Colors = Colors {
 struct Colors {
     reset: &'static str,
     bold: &'static str,
-    dim: &'static str,
     cyan: &'static str,
     green: &'static str,
     red: &'static str,
@@ -185,6 +183,7 @@ pub fn validate_bot_token(token: &str) -> anyhow::Result<()> {
 }
 
 /// Validate agent command
+#[cfg(test)]
 pub fn validate_agent_command(cmd: &str) -> anyhow::Result<()> {
     let valid = ["kiro", "claude", "codex", "gemini"];
     if !valid.contains(&cmd) {

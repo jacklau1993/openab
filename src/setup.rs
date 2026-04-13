@@ -348,37 +348,44 @@ fn generate_config(
     working_dir: &str,
     max_sessions: usize,
     session_ttl_hours: u64,
-    reactions_enabled: bool,
-    emojis: &EmojisToml,
 ) -> String {
     let config = ConfigToml {
         discord: DiscordConfigToml {
             bot_token: bot_token.to_string(),
             allowed_channels: channel_ids,
         },
-        agent: AgentConfigToml {
-            command: agent_command.to_string(),
-            args: match agent_command {
-                "kiro" => vec!["acp".to_string(), "--trust-all-tools".to_string()],
-                _ => vec![],
-            },
-            working_dir: working_dir.to_string(),
+        agent: {
+            let (command, args): (&str, Vec<String>) = match agent_command {
+                "kiro" => (
+                    "kiro-cli",
+                    vec!["acp".into(), "--trust-all-tools".into()],
+                ),
+                "claude" => ("claude-agent-acp", vec![]),
+                "codex" => ("codex-acp", vec![]),
+                "gemini" => ("gemini", vec!["--acp".into()]),
+                other => (other, vec![]),
+            };
+            AgentConfigToml {
+                command: command.to_string(),
+                args,
+                working_dir: working_dir.to_string(),
+            }
         },
         pool: PoolConfigToml {
             max_sessions,
             session_ttl_hours,
         },
         reactions: ReactionsConfigToml {
-            enabled: reactions_enabled,
+            enabled: true,
             remove_after_reply: false,
             emojis: EmojisToml {
-                queued: emojis.queued.clone(),
-                thinking: emojis.thinking.clone(),
-                tool: emojis.tool.clone(),
-                coding: emojis.coding.clone(),
-                web: emojis.web.clone(),
-                done: emojis.done.clone(),
-                error: emojis.error.clone(),
+                queued: "👀".into(),
+                thinking: "🤔".into(),
+                tool: "🔥".into(),
+                coding: "👨💻".into(),
+                web: "⚡".into(),
+                done: "🆗".into(),
+                error: "😱".into(),
             },
             timing: TimingToml {
                 debounce_ms: 700,
@@ -512,7 +519,7 @@ fn section_channels(client: &DiscordClient) -> anyhow::Result<Vec<String>> {
 // Section 3: Agent Configuration
 // ---------------------------------------------------------------------------
 
-fn section_agent() -> (String, String) {
+fn section_agent() -> (String, String, bool) {
     println!();
     cprintln!(C.bold, "--- Step 3: Agent Configuration ---");
     println!();
@@ -534,10 +541,11 @@ fn section_agent() -> (String, String) {
     let idx = prompt_choice("  Select agent:", &choices);
     let agent = choices[idx];
 
-    let default_dir = match agent {
-        "kiro" => "/home/agent",
-        _ => "/home/node",
-    };
+    let deploy_choices = ["Local (current directory)", "Docker / k8s (/home/agent)"];
+    let deploy_idx = prompt_choice("  Deployment target:", &deploy_choices);
+    let is_local = deploy_idx == 0;
+    let default_dir = if is_local { "." } else { "/home/agent" };
+
     let working_dir = prompt_default("  Working directory", default_dir);
 
     cprintln!(
@@ -548,7 +556,7 @@ fn section_agent() -> (String, String) {
     );
     println!();
 
-    (agent.to_string(), working_dir)
+    (agent.to_string(), working_dir, is_local)
 }
 
 // ---------------------------------------------------------------------------
@@ -582,46 +590,29 @@ fn section_pool() -> (usize, u64) {
 // Section 5: Reactions
 // ---------------------------------------------------------------------------
 
-fn section_reactions() -> (bool, EmojisToml) {
-    println!();
-    cprintln!(C.bold, "--- Step 5: Reactions ---");
-    println!();
-
-    let enabled = prompt_yes_no("  Enable reactions?", true);
-
-    let emojis = EmojisToml {
-        queued: prompt_default("  Emoji: queued", "👀"),
-        thinking: prompt_default("  Emoji: thinking", "🤔"),
-        tool: prompt_default("  Emoji: tool", "🔥"),
-        coding: prompt_default("  Emoji: coding", "👨💻"),
-        web: prompt_default("  Emoji: web", "⚡"),
-        done: prompt_default("  Emoji: done", "🆗"),
-        error: prompt_default("  Emoji: error", "😱"),
-    };
-
-    cprintln!(
-        C.green,
-        "  Reactions: {} | Emojis set",
-        if enabled {
-            "enabled"
-        } else {
-            "disabled"
-        }
-    );
-    println!();
-
-    (enabled, emojis)
-}
-
 // ---------------------------------------------------------------------------
 // Preview & Save
 // ---------------------------------------------------------------------------
+
+fn mask_bot_token(config: &str) -> String {
+    config
+        .lines()
+        .map(|line| {
+            if line.trim_start().starts_with("bot_token") {
+                "bot_token = \"***\"".to_string()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
 
 fn section_preview_and_save(config_content: &str, output_path: &PathBuf) -> anyhow::Result<()> {
     println!();
     cprintln!(C.bold, "--- Preview ---");
     println!();
-    println!("{}", config_content);
+    println!("{}", mask_bot_token(config_content));
     println!();
 
     if output_path.exists() {
@@ -657,9 +648,9 @@ fn print_noninteractive_guide() {
         "  allowed_channels = [\"CHANNEL_ID\"]",
         "",
         "  [agent]",
-        "  command = \"claude\"",
-        "  args = []",
-        "  working_dir = \"/home/node\"",
+        "  command = \"kiro-cli\"",
+        "  args = [\"acp\", \"--trust-all-tools\"]",
+        "  working_dir = \"/home/agent\"",
         "",
         "  [pool]",
         "  max_sessions = 10",
@@ -747,13 +738,10 @@ pub fn run_setup(output_path: Option<PathBuf>) -> anyhow::Result<()> {
     };
 
     // Step 3: Agent
-    let (agent, working_dir) = section_agent();
+    let (agent, working_dir, is_local) = section_agent();
 
     // Step 4: Pool
     let (max_sessions, ttl_hours) = section_pool();
-
-    // Step 5: Reactions
-    let (reactions_enabled, emojis) = section_reactions();
 
     // Generate
     let config_content = generate_config(
@@ -763,22 +751,82 @@ pub fn run_setup(output_path: Option<PathBuf>) -> anyhow::Result<()> {
         &working_dir,
         max_sessions,
         ttl_hours,
-        reactions_enabled,
-        &emojis,
     );
 
     // Output
     let output_path = output_path.unwrap_or_else(|| PathBuf::from("config.toml"));
     section_preview_and_save(&config_content, &output_path)?;
 
-    cprintln!(
-        C.green,
-        "  Run with: openab run {}",
-        output_path.display()
-    );
-    println!();
+    print_next_steps(&agent, &output_path, is_local);
 
     Ok(())
+}
+
+fn print_next_steps(agent: &str, output_path: &PathBuf, is_local: bool) {
+    println!();
+    cprintln!(C.bold, "--- Next Steps ---");
+    println!();
+
+    if is_local {
+        match agent {
+            "kiro" => {
+                cprintln!(C.cyan, "  1. Install kiro-cli (see https://kiro.dev for installer)");
+                cprintln!(C.cyan, "  2. Authenticate:");
+                println!("       kiro-cli login --use-device-flow");
+            }
+            "claude" => {
+                cprintln!(C.cyan, "  1. Install Claude Code + ACP adapter:");
+                println!("       npm install -g @anthropic-ai/claude-code @agentclientprotocol/claude-agent-acp");
+                cprintln!(C.cyan, "  2. Authenticate:");
+                println!("       claude setup-token");
+            }
+            "codex" => {
+                cprintln!(C.cyan, "  1. Install Codex CLI + ACP adapter:");
+                println!("       npm install -g @openai/codex @zed-industries/codex-acp");
+                cprintln!(C.cyan, "  2. Authenticate:");
+                println!("       codex login --device-auth");
+            }
+            "gemini" => {
+                cprintln!(C.cyan, "  1. Install Gemini CLI:");
+                println!("       npm install -g @google/gemini-cli");
+                cprintln!(C.cyan, "  2. Authenticate via Google OAuth, or set GEMINI_API_KEY in config.toml");
+            }
+            _ => {}
+        }
+
+        println!();
+        cprintln!(C.green, "  3. Run the bot:");
+        println!("       cargo run -- run {}", output_path.display());
+    } else {
+        cprintln!(
+            C.cyan,
+            "  Docker image already bundles the agent CLI and ACP adapter."
+        );
+        println!();
+        cprintln!(C.cyan, "  1. Deploy with Helm (or your preferred method):");
+        println!("       helm install openab openab/openab \\");
+        println!("         --set agents.{}.discord.botToken=\"$BOT_TOKEN\"", agent);
+        println!();
+        cprintln!(C.cyan, "  2. Authenticate inside the pod (first time only):");
+        match agent {
+            "kiro" => println!(
+                "       kubectl exec -it deployment/openab-kiro -- kiro-cli login --use-device-flow"
+            ),
+            "claude" => println!(
+                "       kubectl exec -it deployment/openab-claude -- claude setup-token"
+            ),
+            "codex" => println!(
+                "       kubectl exec -it deployment/openab-codex -- codex login --device-auth"
+            ),
+            "gemini" => println!(
+                "       Set GEMINI_API_KEY via secret, or exec into the pod for OAuth"
+            ),
+            _ => {}
+        }
+        println!();
+        cprintln!(C.green, "  See README for full Helm options.");
+    }
+    println!();
 }
 
 // ---------------------------------------------------------------------------
@@ -821,42 +869,24 @@ mod tests {
 
     #[test]
     fn test_generate_config_contains_sections() {
-        let emojis = EmojisToml {
-            queued: "👀".into(),
-            thinking: "🤔".into(),
-            tool: "🔥".into(),
-            coding: "👨💻".into(),
-            web: "⚡".into(),
-            done: "🆗".into(),
-            error: "😱".into(),
-        };
         let config = generate_config(
             "my_token",
             "claude",
             vec!["123".to_string()],
-            "/home/node",
+            "/home/agent",
             10,
             24,
-            true,
-            &emojis,
         );
         assert!(config.contains("[discord]"));
         assert!(config.contains("[agent]"));
         assert!(config.contains("[pool]"));
         assert!(config.contains("[reactions]"));
+        assert!(config.contains("[reactions.emojis]"));
+        assert!(config.contains("[reactions.timing]"));
     }
 
     #[test]
     fn test_generate_config_kiro_working_dir() {
-        let emojis = EmojisToml {
-            queued: "👀".into(),
-            thinking: "🤔".into(),
-            tool: "🔥".into(),
-            coding: "👨💻".into(),
-            web: "⚡".into(),
-            done: "🆗".into(),
-            error: "😱".into(),
-        };
         let config = generate_config(
             "tok",
             "kiro",
@@ -864,8 +894,6 @@ mod tests {
             "/home/agent",
             10,
             24,
-            true,
-            &emojis,
         );
         assert!(config.contains(r#"working_dir = "/home/agent""#));
         assert!(config.contains("acp"));

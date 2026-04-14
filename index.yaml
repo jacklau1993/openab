@@ -183,6 +183,16 @@ entries:
     version: 0.1.1
   openab:
   - apiVersion: v2
+    appVersion: 0.7.5-beta.1
+    created: "2026-04-14T23:58:33.240269433Z"
+    description: Discord ↔ ACP coding CLI bridge (Kiro CLI, Claude Code, Codex, Gemini)
+    digest: 77171935be1c7fa541b70d8bda4f31279858a2d42d60fb14b66bfa3610fbe0e3
+    name: openab
+    type: application
+    urls:
+    - https://github.com/openabdev/openab/releases/download/openab-0.7.5-beta.1/openab-0.7.5-beta.1.tgz
+    version: 0.7.5-beta.1
+  - apiVersion: v2
     appVersion: 0.7.4
     created: "2026-04-14T18:41:02.701718614Z"
     description: Discord ↔ ACP coding CLI bridge (Kiro CLI, Claude Code, Codex, Gemini)
@@ -532,4 +542,4 @@ entries:
     urls:
     - https://github.com/openabdev/openab/releases/download/openab-0.3.3/openab-0.3.3.tgz
     version: 0.3.3
-generated: "2026-04-14T18:41:02.702180084Z"
+generated: "2026-04-14T23:58:33.240769345Z"

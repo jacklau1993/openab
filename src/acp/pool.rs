@@ -15,6 +15,9 @@ struct PoolState {
     /// Suspended sessions: thread_key → ACP sessionId.
     /// Saved on eviction so sessions can be resumed via `session/load`.
     suspended: HashMap<String, String>,
+    /// Serializes create/resume work per thread so rapid same-thread requests
+    /// cannot race each other into duplicate `session/load` attempts.
+    creating: HashMap<String, Arc<Mutex<()>>>,
 }
 
 pub struct SessionPool {
@@ -38,12 +41,22 @@ fn remove_if_same_handle<T>(
     }
 }
 
+fn get_or_insert_gate(
+    map: &mut HashMap<String, Arc<Mutex<()>>>,
+    key: &str,
+) -> Arc<Mutex<()>> {
+    map.entry(key.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
+}
+
 impl SessionPool {
     pub fn new(config: AgentConfig, max_sessions: usize) -> Self {
         Self {
             state: RwLock::new(PoolState {
                 active: HashMap::new(),
                 suspended: HashMap::new(),
+                creating: HashMap::new(),
             }),
             config,
             max_sessions,
@@ -51,6 +64,12 @@ impl SessionPool {
     }
 
     pub async fn get_or_create(&self, thread_id: &str) -> Result<()> {
+        let create_gate = {
+            let mut state = self.state.write().await;
+            get_or_insert_gate(&mut state.creating, thread_id)
+        };
+        let _create_guard = create_gate.lock().await;
+
         let (existing, saved_session_id) = {
             let state = self.state.read().await;
             (
@@ -82,12 +101,14 @@ impl SessionPool {
         };
 
         let mut eviction_candidate: Option<(String, Arc<Mutex<AcpConnection>>, Instant, Option<String>)> = None;
+        let mut skipped_locked_candidates = 0usize;
         for (key, conn) in snapshot {
             if key == thread_id {
                 continue;
             }
             let conn_handle = Arc::clone(&conn);
             let Ok(conn) = conn.try_lock() else {
+                skipped_locked_candidates += 1;
                 continue;
             };
             let candidate = (key, conn_handle, conn.last_active, conn.acp_session_id.clone());
@@ -126,6 +147,10 @@ impl SessionPool {
 
         if !resumed {
             new_conn.session_new(&self.config.working_dir).await?;
+            // Surface the reset banner both for restored sessions and for stale
+            // live entries that died before we could recover a resumable
+            // session id. In both cases the caller is continuing after an
+            // unexpected session loss.
             if had_existing || saved_session_id.is_some() {
                 new_conn.session_reset = true;
             }
@@ -156,7 +181,15 @@ impl SessionPool {
                     if let Some(sid) = sid {
                         state.suspended.insert(key, sid);
                     }
+                } else {
+                    warn!(evicted = %key, "pool full but eviction candidate changed before removal");
                 }
+            } else if skipped_locked_candidates > 0 {
+                warn!(
+                    max_sessions = self.max_sessions,
+                    skipped_locked_candidates,
+                    "pool full but all other sessions were busy during eviction scan"
+                );
             }
         }
 
@@ -239,7 +272,7 @@ impl SessionPool {
 
 #[cfg(test)]
 mod tests {
-    use super::remove_if_same_handle;
+    use super::{get_or_insert_gate, remove_if_same_handle};
     use std::collections::HashMap;
     use std::sync::Arc;
     use tokio::sync::Mutex;
@@ -266,5 +299,16 @@ mod tests {
         assert!(removed.is_none());
         let current = map.get("thread").expect("entry should remain");
         assert!(Arc::ptr_eq(current, &fresh));
+    }
+
+    #[test]
+    fn get_or_insert_gate_reuses_gate_for_same_thread() {
+        let mut map = HashMap::new();
+
+        let first = get_or_insert_gate(&mut map, "thread");
+        let second = get_or_insert_gate(&mut map, "thread");
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(map.len(), 1);
     }
 }

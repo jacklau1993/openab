@@ -16,7 +16,7 @@ jobs:
           version: v3.17.3
 
       - name: Install helm-unittest
-        run: helm plugin install https://github.com/helm-unittest/helm-unittest --verify=false
+        run: helm plugin install https://github.com/helm-unittest/helm-unittest
 
       - name: Run chart tests
         run: helm unittest charts/openab

@@ -88,6 +88,30 @@ pub struct DiscordConfig {
     pub trusted_bot_ids: Vec<String>,
 }
 
+/// Controls whether the bot responds to user messages in threads without @mention.
+///
+/// - `Involved` (default): respond to thread messages only if the bot has participated
+///   in the thread (posted at least one message, or the thread parent @mentions the bot).
+///   Channel/MPDM messages always require @mention. DMs always process (implicit mention).
+/// - `Mentions`: always require @mention, even in threads the bot is participating in.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum AllowUsers {
+    #[default]
+    Involved,
+    Mentions,
+}
+
+impl<'de> Deserialize<'de> for AllowUsers {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        match s.to_lowercase().as_str() {
+            "involved" => Ok(Self::Involved),
+            "mentions" => Ok(Self::Mentions),
+            other => Err(serde::de::Error::unknown_variant(other, &["involved", "mentions"])),
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SlackConfig {
     pub bot_token: String,
@@ -96,6 +120,15 @@ pub struct SlackConfig {
     pub allowed_channels: Vec<String>,
     #[serde(default)]
     pub allowed_users: Vec<String>,
+    #[serde(default)]
+    pub allow_bot_messages: AllowBots,
+    /// Bot User IDs (U...) allowed to interact when allow_bot_messages is
+    /// "mentions" or "all". Find via Slack UI: click bot profile → Copy member ID.
+    /// Empty = allow any bot (mode permitting).
+    #[serde(default)]
+    pub trusted_bot_ids: Vec<String>,
+    #[serde(default)]
+    pub allow_user_messages: AllowUsers,
 }
 
 #[derive(Debug, Deserialize)]

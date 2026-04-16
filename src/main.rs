@@ -114,16 +114,23 @@ async fn main() -> anyhow::Result<()> {
                 info!(
                     channels = slack_cfg.allowed_channels.len(),
                     users = slack_cfg.allowed_users.len(),
+                    allow_bot_messages = ?slack_cfg.allow_bot_messages,
+                    allow_user_messages = ?slack_cfg.allow_user_messages,
                     "starting slack adapter"
                 );
                 let router = router.clone();
                 let stt = cfg.stt.clone();
+                let session_ttl = std::time::Duration::from_secs(ttl_secs);
                 Some(tokio::spawn(async move {
                     if let Err(e) = slack::run_slack_adapter(
                         slack_cfg.bot_token,
                         slack_cfg.app_token,
                         slack_cfg.allowed_channels.into_iter().collect(),
                         slack_cfg.allowed_users.into_iter().collect(),
+                        slack_cfg.allow_bot_messages,
+                        slack_cfg.trusted_bot_ids.into_iter().collect(),
+                        slack_cfg.allow_user_messages,
+                        session_ttl,
                         stt,
                         router,
                         shutdown_rx,

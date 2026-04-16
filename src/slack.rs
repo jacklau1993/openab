@@ -1,6 +1,6 @@
 use crate::acp::ContentBlock;
 use crate::adapter::{AdapterRouter, ChatAdapter, ChannelRef, MessageRef, SenderContext};
-use crate::config::SttConfig;
+use crate::config::{AllowBots, AllowUsers, SttConfig};
 use crate::media;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -39,6 +39,7 @@ fn unicode_to_slack_emoji(unicode: &str) -> &str {
         "✅" => "white_check_mark",
         "❌" => "x",
         "🔧" => "wrench",
+        "🎤" => "microphone",
         _ => "grey_question",
     }
 }
@@ -48,20 +49,32 @@ fn unicode_to_slack_emoji(unicode: &str) -> &str {
 /// TTL for cached user display names (5 minutes).
 const USER_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(300);
 
+/// Maximum entries in the participation cache before eviction.
+const PARTICIPATION_CACHE_MAX: usize = 1000;
+
 pub struct SlackAdapter {
     client: reqwest::Client,
     bot_token: String,
     bot_user_id: tokio::sync::OnceCell<String>,
     user_cache: tokio::sync::Mutex<HashMap<String, (String, tokio::time::Instant)>>,
+    /// Cache: Bot ID (B...) → Bot User ID (U...) for trusted_bot_ids matching.
+    bot_id_cache: tokio::sync::Mutex<HashMap<String, String>>,
+    /// Positive-only cache: thread_ts → cached_at for threads where bot has participated.
+    participated_threads: tokio::sync::Mutex<HashMap<String, tokio::time::Instant>>,
+    /// TTL for participation cache entries (matches session_ttl_hours from config).
+    session_ttl: std::time::Duration,
 }
 
 impl SlackAdapter {
-    pub fn new(bot_token: String) -> Self {
+    pub fn new(bot_token: String, session_ttl: std::time::Duration) -> Self {
         Self {
             client: reqwest::Client::new(),
             bot_token,
             bot_user_id: tokio::sync::OnceCell::new(),
             user_cache: tokio::sync::Mutex::new(HashMap::new()),
+            bot_id_cache: tokio::sync::Mutex::new(HashMap::new()),
+            participated_threads: tokio::sync::Mutex::new(HashMap::new()),
+            session_ttl,
         }
     }
 
@@ -84,6 +97,25 @@ impl SlackAdapter {
             .header("Authorization", format!("Bearer {}", self.bot_token))
             .header("Content-Type", "application/json; charset=utf-8")
             .json(&body)
+            .send()
+            .await?;
+
+        let json: serde_json::Value = resp.json().await?;
+        if json["ok"].as_bool() != Some(true) {
+            let err = json["error"].as_str().unwrap_or("unknown error");
+            return Err(anyhow!("Slack API {method}: {err}"));
+        }
+        Ok(json)
+    }
+
+    /// Call a Slack API method using GET with query parameters.
+    /// Required for read methods like conversations.replies that don't accept JSON body.
+    async fn api_get(&self, method: &str, params: &[(&str, &str)]) -> Result<serde_json::Value> {
+        let resp = self
+            .client
+            .get(format!("{SLACK_API}/{method}"))
+            .header("Authorization", format!("Bearer {}", self.bot_token))
+            .query(params)
             .send()
             .await?;
 
@@ -137,6 +169,118 @@ impl SlackAdapter {
         );
 
         Some(resolved)
+    }
+
+    /// Resolve a Bot ID (B...) to Bot User ID (U...) via bots.info API.
+    /// Cached permanently (bot IDs don't change).
+    async fn resolve_bot_user_id(&self, bot_id: &str) -> Option<String> {
+        {
+            let cache = self.bot_id_cache.lock().await;
+            if let Some(user_id) = cache.get(bot_id) {
+                return Some(user_id.clone());
+            }
+        }
+
+        let resp = self
+            .api_post("bots.info", serde_json::json!({ "bot": bot_id }))
+            .await
+            .ok()?;
+        let user_id = resp.get("bot")?
+            .get("user_id")?
+            .as_str()?
+            .to_string();
+
+        self.bot_id_cache.lock().await.insert(
+            bot_id.to_string(),
+            user_id.clone(),
+        );
+
+        Some(user_id)
+    }
+
+    /// Check if the bot has participated in a Slack thread.
+    /// Returns true if: parent message @mentions the bot, OR any message in thread is from the bot.
+    /// Fail-closed: returns false on API error (consistent with Discord's approach).
+    /// Only caches positive results (involved=true is irreversible).
+    async fn bot_participated_in_thread(&self, channel: &str, thread_ts: &str) -> bool {
+        // Check positive cache first
+        {
+            let cache = self.participated_threads.lock().await;
+            if let Some(cached_at) = cache.get(thread_ts) {
+                if cached_at.elapsed() < self.session_ttl {
+                    return true;
+                }
+            }
+        }
+
+        let bot_id = match self.get_bot_user_id().await {
+            Some(id) => id,
+            None => {
+                warn!("cannot resolve bot user ID, rejecting (fail-closed)");
+                return false;
+            }
+        };
+
+        let resp = self
+            .api_get(
+                "conversations.replies",
+                &[
+                    ("channel", channel),
+                    ("ts", thread_ts),
+                    ("limit", "200"),
+                    ("inclusive", "true"),
+                ],
+            )
+            .await;
+
+        let json = match resp {
+            Ok(json) => json,
+            Err(e) => {
+                warn!(channel, thread_ts, error = %e, "failed to fetch thread replies, rejecting (fail-closed)");
+                return false;
+            }
+        };
+        let Some(messages) = json["messages"].as_array() else { return false };
+
+        // Check if parent message @mentions the bot
+        let parent_mentions_bot = messages
+            .first()
+            .and_then(|m| m["text"].as_str())
+            .is_some_and(|text| text.contains(&format!("<@{bot_id}>")));
+
+        // Check if any message in thread is from the bot
+        let bot_posted = messages.iter().any(|m| m["user"].as_str() == Some(bot_id));
+
+        let involved = parent_mentions_bot || bot_posted;
+
+        if involved {
+            self.cache_participation(thread_ts).await;
+        }
+
+        involved
+    }
+
+    /// Insert a positive participation entry, enforcing cache bounds.
+    async fn cache_participation(&self, thread_ts: &str) {
+        let mut cache = self.participated_threads.lock().await;
+        let now = tokio::time::Instant::now();
+
+        cache.insert(thread_ts.to_string(), now);
+
+        if cache.len() > PARTICIPATION_CACHE_MAX {
+            // Evict expired entries first
+            cache.retain(|_, ts| ts.elapsed() < self.session_ttl);
+
+            // If still over, evict oldest half
+            if cache.len() > PARTICIPATION_CACHE_MAX {
+                let mut entries: Vec<_> = cache.iter().map(|(k, v)| (k.clone(), *v)).collect();
+                entries.sort_by_key(|(_, ts)| *ts);
+                let evict_count = entries.len() / 2;
+                for (key, _) in entries.into_iter().take(evict_count) {
+                    cache.remove(&key);
+                }
+            }
+        }
     }
 }
 
@@ -242,18 +386,26 @@ impl ChatAdapter for SlackAdapter {
 
 // --- Socket Mode event loop ---
 
+/// Hard cap on consecutive bot messages in a thread. Prevents runaway loops.
+const MAX_CONSECUTIVE_BOT_TURNS: usize = 10;
+
 /// Run the Slack adapter using Socket Mode (persistent WebSocket, no public URL needed).
 /// Reconnects automatically on disconnect.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_slack_adapter(
     bot_token: String,
     app_token: String,
     allowed_channels: HashSet<String>,
     allowed_users: HashSet<String>,
+    allow_bot_messages: AllowBots,
+    trusted_bot_ids: HashSet<String>,
+    allow_user_messages: AllowUsers,
+    session_ttl: std::time::Duration,
     stt_config: SttConfig,
     router: Arc<AdapterRouter>,
     mut shutdown_rx: watch::Receiver<bool>,
 ) -> Result<()> {
-    let adapter = Arc::new(SlackAdapter::new(bot_token.clone()));
+    let adapter = Arc::new(SlackAdapter::new(bot_token.clone(), session_ttl));
 
     loop {
         // Check for shutdown before (re)connecting
@@ -325,56 +477,147 @@ pub async fn run_slack_adapter(
                                                 });
                                             }
                                             "message" => {
-                                                // Handle thread follow-ups without @mention.
-                                                // Skip bot messages and subtypes that aren't real user messages.
+                                                let channel_id = event["channel"].as_str().unwrap_or("");
                                                 let has_thread = event["thread_ts"].is_string();
                                                 let is_bot = event["bot_id"].is_string()
                                                     || event["subtype"].as_str() == Some("bot_message");
                                                 let subtype = event["subtype"].as_str().unwrap_or("");
-                                                let has_files = event["files"].is_array();
-                                                // Skip messages that @mention the bot — app_mention handles those
                                                 let msg_text = event["text"].as_str().unwrap_or("");
-                                                let mentions_bot = if let Some(bot_id) = adapter.get_bot_user_id().await {
-                                                    msg_text.contains(&format!("<@{bot_id}>"))
+                                                let mentions_bot = if let Some(bot_uid) = adapter.get_bot_user_id().await {
+                                                    msg_text.contains(&format!("<@{bot_uid}>"))
                                                 } else {
                                                     false
                                                 };
+                                                let is_dm = channel_id.starts_with('D');
+
                                                 debug!(
+                                                    channel_id,
                                                     has_thread,
                                                     is_bot,
+                                                    is_dm,
                                                     subtype,
-                                                    has_files,
                                                     mentions_bot,
                                                     text = msg_text,
                                                     "message event received"
                                                 );
+
+                                                // Skip non-message subtypes
                                                 let skip_subtype = matches!(subtype,
                                                     "message_changed" | "message_deleted" |
                                                     "channel_join" | "channel_leave" |
                                                     "channel_topic" | "channel_purpose"
                                                 );
-                                                if has_thread && !is_bot && !skip_subtype && !mentions_bot {
-                                                    let event = event.clone();
-                                                    let adapter = adapter.clone();
-                                                    let bot_token = bot_token.clone();
-                                                    let allowed_channels = allowed_channels.clone();
-                                                    let allowed_users = allowed_users.clone();
-                                                    let stt_config = stt_config.clone();
-                                                    let router = router.clone();
-                                                    tokio::spawn(async move {
-                                                        handle_message(
-                                                            &event,
-                                                            false,
-                                                            &adapter,
-                                                            &bot_token,
-                                                            &allowed_channels,
-                                                            &allowed_users,
-                                                            &stt_config,
-                                                            &router,
-                                                        )
-                                                        .await;
-                                                    });
+                                                if skip_subtype { continue; }
+
+                                                // Skip messages that @mention the bot — app_mention handles those
+                                                // (except in DMs where app_mention doesn't fire)
+                                                if mentions_bot && !is_dm { continue; }
+
+                                                // --- Bot message gating ---
+                                                if is_bot {
+                                                    let event_bot_id = event["bot_id"].as_str().unwrap_or("");
+                                                    match allow_bot_messages {
+                                                        AllowBots::Off => { continue; }
+                                                        AllowBots::Mentions => {
+                                                            if !mentions_bot { continue; }
+                                                        }
+                                                        AllowBots::All => {
+                                                            // Loop protection: count consecutive bot msgs (fail-closed)
+                                                            if let Some(thread_ts) = event["thread_ts"].as_str() {
+                                                                let limit_str = (MAX_CONSECUTIVE_BOT_TURNS + 1).to_string();
+                                                                match adapter.api_get(
+                                                                    "conversations.replies",
+                                                                    &[
+                                                                        ("channel", channel_id),
+                                                                        ("ts", thread_ts),
+                                                                        ("limit", &limit_str),
+                                                                        ("inclusive", "true"),
+                                                                    ],
+                                                                ).await {
+                                                                    Ok(resp) => {
+                                                                        if let Some(msgs) = resp["messages"].as_array() {
+                                                                            let consecutive = msgs.iter().rev()
+                                                                                .take_while(|m| {
+                                                                                    m["bot_id"].is_string()
+                                                                                        || m["subtype"].as_str() == Some("bot_message")
+                                                                                })
+                                                                                .count();
+                                                                            if consecutive >= MAX_CONSECUTIVE_BOT_TURNS {
+                                                                                warn!("bot turn cap reached ({MAX_CONSECUTIVE_BOT_TURNS}), ignoring");
+                                                                                continue;
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    Err(e) => {
+                                                                        warn!(channel_id, thread_ts, error = %e, "failed to fetch thread for bot loop check, rejecting (fail-closed)");
+                                                                        continue;
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    // Check trusted_bot_ids
+                                                    if !trusted_bot_ids.is_empty() {
+                                                        let resolved = adapter.resolve_bot_user_id(event_bot_id).await;
+                                                        let is_trusted = resolved
+                                                            .as_ref()
+                                                            .is_some_and(|uid| trusted_bot_ids.contains(uid.as_str()));
+                                                        if !is_trusted {
+                                                            debug!(event_bot_id, resolved = ?resolved, "bot not in trusted_bot_ids, ignoring");
+                                                            continue;
+                                                        }
+                                                    }
+                                                    // Bot messages must be in a thread (no top-level bot processing)
+                                                    if !has_thread { continue; }
                                                 }
+
+                                                // --- User message gating ---
+                                                if !is_bot {
+                                                    if is_dm {
+                                                        // DM: implicit mention — always process
+                                                    } else {
+                                                        match allow_user_messages {
+                                                            AllowUsers::Mentions => {
+                                                                if !mentions_bot { continue; }
+                                                            }
+                                                            AllowUsers::Involved => {
+                                                                if !has_thread {
+                                                                    // Non-thread channel message: require mention
+                                                                    // (app_mention handles this, but DMs don't get app_mention)
+                                                                    continue;
+                                                                }
+                                                                // Thread message: check bot participation
+                                                                let thread_ts = event["thread_ts"].as_str().unwrap_or("");
+                                                                if !adapter.bot_participated_in_thread(channel_id, thread_ts).await {
+                                                                    debug!(channel_id, thread_ts, "bot not involved in thread, ignoring");
+                                                                    continue;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                // Dispatch to handle_message
+                                                let event = event.clone();
+                                                let adapter = adapter.clone();
+                                                let bot_token = bot_token.clone();
+                                                let allowed_channels = allowed_channels.clone();
+                                                let allowed_users = allowed_users.clone();
+                                                let stt_config = stt_config.clone();
+                                                let router = router.clone();
+                                                tokio::spawn(async move {
+                                                    handle_message(
+                                                        &event,
+                                                        is_dm,
+                                                        &adapter,
+                                                        &bot_token,
+                                                        &allowed_channels,
+                                                        &allowed_users,
+                                                        &stt_config,
+                                                        &router,
+                                                    )
+                                                    .await;
+                                                });
                                             }
                                             _ => {}
                                         }
@@ -435,7 +678,7 @@ async fn get_socket_mode_url(app_token: &str) -> Result<String> {
 #[allow(clippy::too_many_arguments)]
 async fn handle_message(
     event: &serde_json::Value,
-    is_mention: bool,
+    strip_mentions: bool,
     adapter: &Arc<SlackAdapter>,
     bot_token: &str,
     allowed_channels: &HashSet<String>,
@@ -447,10 +690,13 @@ async fn handle_message(
         Some(ch) => ch.to_string(),
         None => return,
     };
-    let user_id = match event["user"].as_str() {
+    // Bot messages may lack "user" field — fall back to "bot_id" as sender identifier
+    let user_id = match event["user"].as_str().or_else(|| event["bot_id"].as_str()) {
         Some(u) => u.to_string(),
         None => return,
     };
+    let is_bot_msg = event["bot_id"].is_string()
+        || event["subtype"].as_str() == Some("bot_message");
     let text = match event["text"].as_str() {
         Some(t) => t.to_string(),
         None => return,
@@ -466,8 +712,8 @@ async fn handle_message(
         return;
     }
 
-    // Check allowed users
-    if !allowed_users.is_empty() && !allowed_users.contains(&user_id) {
+    // Check allowed users — skip for bot messages (they go through trusted_bot_ids instead)
+    if !is_bot_msg && !allowed_users.is_empty() && !allowed_users.contains(&user_id) {
         tracing::info!(user_id, "denied Slack user, ignoring");
         let msg_ref = MessageRef {
             channel: ChannelRef {
@@ -482,17 +728,10 @@ async fn handle_message(
         return;
     }
 
-    // Strip bot mention from text only for @mention events
-    let prompt = if is_mention {
+    // Strip bot mention from text for @mention events; DMs and thread follow-ups pass through as-is
+    let prompt = if strip_mentions {
         strip_slack_mention(&text)
     } else {
-        // Thread follow-up: check for bot loop before processing
-        if let Some(ref tts) = thread_ts {
-            if is_bot_loop(adapter, &channel_id, tts).await {
-                tracing::warn!(channel_id, thread_ts = tts, "bot loop detected, ignoring");
-                return;
-            }
-        }
         text.trim().to_string()
     };
 
@@ -537,6 +776,16 @@ async fn handle_message(
                     }
                 } else {
                     debug!(filename, "skipping audio attachment (STT disabled)");
+                    let msg_ref = MessageRef {
+                        channel: ChannelRef {
+                            platform: "slack".into(),
+                            channel_id: channel_id.clone(),
+                            thread_id: thread_ts.clone(),
+                            parent_id: None,
+                        },
+                        message_id: ts.clone(),
+                    };
+                    let _ = adapter.add_reaction(&msg_ref, "🎤").await;
                 }
             } else if let Some(block) = media::download_and_encode_image(
                 url,
@@ -564,7 +813,7 @@ async fn handle_message(
         display_name,
         channel: "slack".into(),
         channel_id: channel_id.clone(),
-        is_bot: false,
+        is_bot: is_bot_msg,
     };
 
     let trigger_msg = MessageRef {
@@ -596,39 +845,6 @@ async fn handle_message(
 
 static SLACK_MENTION_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"<@[A-Z0-9]+>").unwrap());
-
-/// Hard cap on consecutive bot messages in a thread.
-/// Mirrors Discord's MAX_CONSECUTIVE_BOT_TURNS to prevent runaway loops.
-const MAX_CONSECUTIVE_BOT_TURNS: usize = 10;
-
-/// Check if the last N messages in a Slack thread are all from bots.
-async fn is_bot_loop(adapter: &SlackAdapter, channel: &str, thread_ts: &str) -> bool {
-    let resp = adapter
-        .api_post(
-            "conversations.replies",
-            serde_json::json!({
-                "channel": channel,
-                "ts": thread_ts,
-                "limit": MAX_CONSECUTIVE_BOT_TURNS + 1,
-                "inclusive": true,
-            }),
-        )
-        .await;
-
-    let Ok(json) = resp else { return false }; // fail-open on API error
-    let Some(messages) = json["messages"].as_array() else { return false };
-
-    // Skip the first message (thread parent), count consecutive bot messages from the end
-    let recent: Vec<_> = messages.iter().skip(1).rev().collect();
-    if recent.len() < MAX_CONSECUTIVE_BOT_TURNS {
-        return false;
-    }
-
-    recent
-        .iter()
-        .take(MAX_CONSECUTIVE_BOT_TURNS)
-        .all(|m| m["bot_id"].is_string() || m["subtype"].as_str() == Some("bot_message"))
-}
 
 fn strip_slack_mention(text: &str) -> String {
     SLACK_MENTION_RE.replace_all(text, "").trim().to_string()

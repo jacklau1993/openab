@@ -13,6 +13,11 @@ allowed_channels = ["1234567890"]       # empty or omitted = allow all channels
 # app_token = "${SLACK_APP_TOKEN}"     # App-Level Token (xapp-...) for Socket Mode
 # allowed_channels = ["C0123456789"]   # empty or omitted = allow all channels
 # allowed_users = ["U0123456789"]      # empty or omitted = allow all users
+# allow_bot_messages = "off"           # "off" (default) | "mentions" | "all"
+# trusted_bot_ids = []                 # empty = any bot (mode permitting); set to restrict
+# allow_user_messages = "involved"     # "involved" (default) | "mentions"
+                                        # "involved" = reply in threads bot has participated in
+                                        # "mentions" = always require @mention
 
 [agent]
 command = "kiro-cli"

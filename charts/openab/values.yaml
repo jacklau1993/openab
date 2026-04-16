@@ -133,6 +133,14 @@ agents:
       appToken: ""       # App-Level Token (xapp-...) for Socket Mode
       allowedChannels: []  # empty = allow all channels
       allowedUsers: []     # empty = allow all users
+      # allowBotMessages: "off" (default) | "mentions" | "all"
+      allowBotMessages: "off"
+      # trustedBotIds: Bot User IDs (U...) — find via Slack UI: click bot profile → Copy member ID
+      trustedBotIds: []
+      # allowUserMessages: "involved" (default) | "mentions"
+      # "involved" = respond to thread follow-ups without @mention if bot has participated
+      # "mentions" = always require @mention
+      allowUserMessages: "involved"
     workingDir: /home/agent
     env: {}
     envFrom: []

@@ -60,6 +60,21 @@ data:
     {{- end }}
     {{- end }}
     allowed_users = {{ ($cfg.slack).allowedUsers | default list | toJson }}
+    {{- if ($cfg.slack).allowBotMessages }}
+    {{- if not (has ($cfg.slack).allowBotMessages (list "off" "mentions" "all")) }}
+    {{- fail (printf "agents.%s.slack.allowBotMessages must be one of: off, mentions, all — got: %s" $name ($cfg.slack).allowBotMessages) }}
+    {{- end }}
+    allow_bot_messages = "{{ ($cfg.slack).allowBotMessages }}"
+    {{- end }}
+    {{- if ($cfg.slack).trustedBotIds }}
+    trusted_bot_ids = {{ ($cfg.slack).trustedBotIds | toJson }}
+    {{- end }}
+    {{- if ($cfg.slack).allowUserMessages }}
+    {{- if not (has ($cfg.slack).allowUserMessages (list "involved" "mentions")) }}
+    {{- fail (printf "agents.%s.slack.allowUserMessages must be one of: involved, mentions — got: %s" $name ($cfg.slack).allowUserMessages) }}
+    {{- end }}
+    allow_user_messages = "{{ ($cfg.slack).allowUserMessages }}"
+    {{- end }}
     {{- end }}
 
     [agent]

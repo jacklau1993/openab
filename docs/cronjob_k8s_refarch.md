@@ -1,8 +1,43 @@
-# CronJob
+# Kubernetes CronJob Reference Architecture
 
-This document explains how OpenAB sets up the project-screening CronJob that polls the GitHub project board, claims new items, runs `codex exec`, and delivers the report back to Discord.
+This document is a reference architecture for how we set up the project-screening CronJob around `codex exec`, GitHub Projects, and Discord delivery.
 
-## Why We Used A CronJob
+It is not meant to be framed as the one official OpenAB recommendation. The intent is narrower: when someone asks how to do scheduled screening work in Kubernetes, we can hand this document to their Kiro or Codex-style agent as a concrete starting point and let that agent adapt the pattern to their environment.
+
+## ASCII Flow
+
+```text
+GitHub Project Board
+  Incoming
+     |
+     v
+Kubernetes CronJob
+  schedule: every 30 minutes
+  concurrencyPolicy: Forbid
+     |
+     v
+Ephemeral Job Pod
+  image: ghcr.io/openabdev/openab-codex:latest
+  command: bash /opt/openab-project-screening/screen_once.sh
+     |
+     +--> read GitHub Project state via gh
+     +--> claim first Incoming item
+     +--> build prompt from PR/issue metadata
+     +--> run codex exec
+     +--> post summary to Discord
+     +--> create Discord thread
+     +--> post full report
+     |
+     v
+Project Board
+  PR-Screening
+     |
+     v
+Masami / Pahud
+  human or agent follow-up
+```
+
+## What This Document Covers
 
 We deliberately chose a Kubernetes `CronJob` instead of:
 
@@ -17,28 +52,6 @@ This shape fits Kubernetes better:
 - failures are isolated per run
 - logs are attached to each job
 - `concurrencyPolicy: Forbid` prevents overlapping claimers
-
-The model is:
-
-```text
-GitHub Project Incoming
-        |
-        v
-Kubernetes CronJob
-        |
-        v
-ephemeral job pod
-        |
-        v
-screen_once.sh
-  - find Incoming item
-  - move it to PR-Screening
-  - build prompt
-  - run codex exec
-  - post Discord summary
-  - create Discord thread
-  - post full report
-```
 
 ## High-Level Architecture
 
@@ -78,6 +91,8 @@ The job is intentionally stateless.
 - no shared PVC is required
 
 This avoids coupling the scheduled workflow to a long-lived interactive pod.
+
+If another team wants the same behavior, they should treat the specific secret names, project names, and channel IDs in this document as implementation examples and swap in their own values.
 
 ## CronJob Manifest
 
@@ -121,7 +136,7 @@ spec:
                       name: openab-kiro-codex
                       key: discord-bot-token
                 - name: DISCORD_REPORT_CHANNEL_ID
-                  value: "1494378525640097921"
+                  value: "<your_channel_id>"
 ```
 
 Security settings were kept tight on purpose:
@@ -331,7 +346,7 @@ projectScreening:
     enabled: true
     secretName: "openab-kiro-codex"
     secretKey: "discord-bot-token"
-    channelId: "1494378525640097921"
+    channelId: "<your_channel_id>"
 ```
 
 Relevant Helm files:
@@ -359,3 +374,5 @@ The elegant part of this setup is that each concern is separated cleanly:
 - the handoff queue is `PR-Screening`
 
 That separation is why this design works well in Kubernetes.
+
+The more opinionated design discussion, including alternatives we considered and why we ultimately chose this route, should live in a separate architecture note. This document is intentionally the operational reference version.

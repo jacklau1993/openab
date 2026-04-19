@@ -169,6 +169,7 @@ async fn main() -> anyhow::Result<()> {
                     trusted_bot_ids,
                     allow_user_messages: discord_cfg.allow_user_messages,
                     participated_threads: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+                    multibot_threads: tokio::sync::Mutex::new(std::collections::HashMap::new()),
                     session_ttl: std::time::Duration::from_secs(ttl_secs),
                 };
 

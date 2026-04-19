@@ -103,6 +103,24 @@ Controls whether the bot requires @mention in threads.
 |---|---|
 | `"involved"` (default) | Respond in threads the bot owns or has participated in without @mention. Main channel always requires @mention. |
 | `"mentions"` | Always require @mention, even in the bot's own threads. |
+| `"multibot-mentions"` | Same as `involved` in single-bot threads. In threads where other bots have also posted, requires @mention — prevents all bots from responding to every message. |
+
+#### Comparison
+
+| Scenario | `involved` | `mentions` | `multibot-mentions` |
+|---|---|---|---|
+| Main channel (no @mention) | ❌ | ❌ | ❌ |
+| Main channel (with @mention) | ✅ | ✅ | ✅ |
+| Single-bot thread (no @mention) | ✅ | ❌ | ✅ |
+| Single-bot thread (with @mention) | ✅ | ✅ | ✅ |
+| Multi-bot thread (no @mention) | ✅ | ❌ | ❌ |
+| Multi-bot thread (with @mention) | ✅ | ✅ | ✅ |
+
+#### When to use which
+
+- **`involved`** — Single-bot setup, or you want all bots to respond freely in shared threads.
+- **`mentions`** — Strict control. Every message must explicitly @mention the bot. Best for high-traffic channels where accidental triggers are a concern.
+- **`multibot-mentions`** — Multi-bot setup. Natural conversation in single-bot threads, explicit @mention control in multi-bot threads. Recommended for most multi-bot deployments.
 
 ### `trusted_bot_ids`
 
@@ -171,6 +189,18 @@ helm install openab openab/openab \
 
 - **One thread per message:** when you @mention both bots in a single message, only the first bot creates a thread. The second bot's thread creation fails and the message is dropped. Workaround: @mention each bot in separate messages.
 - **Thread ownership:** a bot only responds in threads it owns or has participated in (`involved` mode). To have Bot B respond in Bot A's thread, use `mentions` mode and explicitly @mention Bot B.
+
+### Recommended: `multibot-mentions` mode
+
+In multi-bot channels, use `multibot-mentions` to get the best of both worlds:
+
+```toml
+[discord]
+allow_user_messages = "multibot-mentions"
+```
+
+- **Single-bot threads:** natural conversation, no @mention needed (same as `involved`)
+- **Multi-bot threads:** requires @mention so only the addressed bot responds
 
 ### Bot-to-bot communication
 

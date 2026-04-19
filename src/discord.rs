@@ -116,34 +116,47 @@ pub struct Handler {
     pub allow_user_messages: AllowUsers,
     /// Positive-only cache: thread channel_id → cached_at for threads where bot has participated.
     pub participated_threads: tokio::sync::Mutex<HashMap<String, tokio::time::Instant>>,
+    /// Positive-only cache: thread channel_id → cached_at for threads where other bots have posted.
+    /// Like participation, a thread becoming multi-bot is irreversible (bot messages don't disappear).
+    pub multibot_threads: tokio::sync::Mutex<HashMap<String, tokio::time::Instant>>,
     /// TTL for participation cache entries (from pool.session_ttl_hours).
     pub session_ttl: std::time::Duration,
 }
 
 impl Handler {
-    /// Check if the bot has participated in a Discord thread.
-    /// Returns true if any message in the thread is from the bot.
-    /// Fail-closed: returns false on API error.
-    /// Only caches positive results (participation is irreversible).
+    /// Check if the bot has participated in a Discord thread, and whether
+    /// other bots have also posted in it.
+    /// Returns `(involved, other_bot_present)`.
+    /// Fail-closed: returns `(false, false)` on API error.
+    /// Caches positive results only (both participation and multi-bot status are irreversible).
     async fn bot_participated_in_thread(
         &self,
         http: &Http,
         channel_id: ChannelId,
         bot_id: UserId,
-    ) -> bool {
+    ) -> (bool, bool) {
         let key = channel_id.to_string();
 
-        // Check positive cache
-        {
+        // Check positive caches
+        let cached_involved = {
             let cache = self.participated_threads.lock().await;
-            if let Some(cached_at) = cache.get(&key) {
-                if cached_at.elapsed() < self.session_ttl {
-                    return true;
-                }
-            }
+            cache.get(&key).is_some_and(|ts| ts.elapsed() < self.session_ttl)
+        };
+        let cached_multibot = {
+            let cache = self.multibot_threads.lock().await;
+            cache.get(&key).is_some_and(|ts| ts.elapsed() < self.session_ttl)
+        };
+
+        // Both cached → skip fetch entirely
+        if cached_involved && cached_multibot {
+            return (true, true);
+        }
+        // Involved cached + not MultibotMentions mode → don't need other_bot info
+        if cached_involved && self.allow_user_messages != AllowUsers::MultibotMentions {
+            return (true, false);
         }
 
-        // Fetch recent messages and check if bot posted any
+        // Fetch recent messages
         let messages = match channel_id
             .messages(http, serenity::builder::GetMessages::new().limit(200))
             .await
@@ -155,15 +168,16 @@ impl Handler {
                     error = %e,
                     "failed to fetch thread messages for participation check, rejecting (fail-closed)"
                 );
-                return false;
+                return (false, false);
             }
         };
 
-        let involved = messages.iter().any(|m| m.author.id == bot_id);
+        let involved = cached_involved || messages.iter().any(|m| m.author.id == bot_id);
+        let other_bot_present = cached_multibot || messages.iter().any(|m| m.author.bot && m.author.id != bot_id);
 
-        if involved {
+        if involved && !cached_involved {
             let mut cache = self.participated_threads.lock().await;
-            cache.insert(key, tokio::time::Instant::now());
+            cache.insert(key.clone(), tokio::time::Instant::now());
 
             // Evict if over capacity
             if cache.len() > PARTICIPATION_CACHE_MAX {
@@ -179,7 +193,24 @@ impl Handler {
             }
         }
 
-        involved
+        if other_bot_present && !cached_multibot {
+            let mut cache = self.multibot_threads.lock().await;
+            cache.insert(key, tokio::time::Instant::now());
+
+            if cache.len() > PARTICIPATION_CACHE_MAX {
+                cache.retain(|_, ts| ts.elapsed() < self.session_ttl);
+                if cache.len() > PARTICIPATION_CACHE_MAX {
+                    let mut entries: Vec<_> = cache.iter().map(|(k, v)| (k.clone(), *v)).collect();
+                    entries.sort_by_key(|(_, ts)| *ts);
+                    let evict_count = entries.len() / 2;
+                    for (k, _) in entries.into_iter().take(evict_count) {
+                        cache.remove(&k);
+                    }
+                }
+            }
+        }
+
+        (involved, other_bot_present)
     }
 }
 
@@ -294,6 +325,8 @@ impl EventHandler for Handler {
         // Mentions: always require @mention, even in bot's own threads.
         // Involved (default): skip @mention if the bot owns the thread
         //   (Option A) OR has previously posted in it (Option B).
+        // MultibotMentions: same as Involved, but if other bots are also
+        //   in the thread, require @mention to avoid all bots responding.
         if !is_mentioned {
             match self.allow_user_messages {
                 AllowUsers::Mentions => return,
@@ -301,12 +334,37 @@ impl EventHandler for Handler {
                     if !in_thread {
                         return;
                     }
-                    let involved = bot_owns_thread
-                        || self
-                            .bot_participated_in_thread(&ctx.http, msg.channel_id, bot_id)
-                            .await;
+                    let (involved, _) = if bot_owns_thread {
+                        (true, false) // other_bot_present not needed for Involved mode
+                    } else {
+                        self.bot_participated_in_thread(&ctx.http, msg.channel_id, bot_id)
+                            .await
+                    };
                     if !involved {
                         tracing::debug!(channel_id = %msg.channel_id, "bot not involved in thread, ignoring");
+                        return;
+                    }
+                }
+                AllowUsers::MultibotMentions => {
+                    if !in_thread {
+                        return;
+                    }
+                    let (involved, other_bot) = if bot_owns_thread {
+                        // Still need to check for other bots
+                        let (_, other) = self
+                            .bot_participated_in_thread(&ctx.http, msg.channel_id, bot_id)
+                            .await;
+                        (true, other)
+                    } else {
+                        self.bot_participated_in_thread(&ctx.http, msg.channel_id, bot_id)
+                            .await
+                    };
+                    if !involved {
+                        tracing::debug!(channel_id = %msg.channel_id, "bot not involved in thread, ignoring");
+                        return;
+                    }
+                    if other_bot {
+                        tracing::debug!(channel_id = %msg.channel_id, "multi-bot thread, requiring @mention");
                         return;
                     }
                 }

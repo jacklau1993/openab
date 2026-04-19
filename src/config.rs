@@ -96,20 +96,24 @@ pub struct DiscordConfig {
 ///   in the thread (posted at least one message, or the thread parent @mentions the bot).
 ///   Channel/MPDM messages always require @mention. DMs always process (implicit mention).
 /// - `Mentions`: always require @mention, even in threads the bot is participating in.
+/// - `MultibotMentions`: same as `Involved` in single-bot threads; falls back to `Mentions`
+///   when other bots have also posted in the thread.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum AllowUsers {
     #[default]
     Involved,
     Mentions,
+    MultibotMentions,
 }
 
 impl<'de> Deserialize<'de> for AllowUsers {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let s = String::deserialize(deserializer)?;
-        match s.to_lowercase().as_str() {
+        match s.to_lowercase().replace('-', "_").as_str() {
             "involved" => Ok(Self::Involved),
             "mentions" => Ok(Self::Mentions),
-            other => Err(serde::de::Error::unknown_variant(other, &["involved", "mentions"])),
+            "multibot_mentions" => Ok(Self::MultibotMentions),
+            other => Err(serde::de::Error::unknown_variant(other, &["involved", "mentions", "multibot-mentions"])),
         }
     }
 }

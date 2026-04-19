@@ -664,7 +664,7 @@ pub async fn run_slack_adapter(
                                                             AllowUsers::Mentions => {
                                                                 if !mentions_bot { continue; }
                                                             }
-                                                            AllowUsers::Involved => {
+                                                            AllowUsers::Involved | AllowUsers::MultibotMentions => {
                                                                 if !has_thread {
                                                                     // Non-thread channel message: require mention
                                                                     // (app_mention handles this, but DMs don't get app_mention)

@@ -1,5 +1,9 @@
 /// Split text into chunks at line boundaries, each <= limit Unicode characters (UTF-8 safe).
 /// Discord's message limit counts Unicode characters, not bytes.
+///
+/// Fenced code blocks (``` ... ```) are handled specially: if a split falls inside a
+/// code block, the current chunk is closed with ``` and the next chunk is reopened with
+/// ```, so each chunk renders correctly in Discord.
 pub fn split_message(text: &str, limit: usize) -> Vec<String> {
     if text.chars().count() <= limit {
         return vec![text.to_string()];
@@ -8,19 +12,37 @@ pub fn split_message(text: &str, limit: usize) -> Vec<String> {
     let mut chunks = Vec::new();
     let mut current = String::new();
     let mut current_len: usize = 0;
+    let mut in_code_fence = false;
 
     for line in text.split('\n') {
         let line_chars = line.chars().count();
+        let is_fence_marker = line.starts_with("```");
+
         // +1 for the newline
         if !current.is_empty() && current_len + line_chars + 1 > limit {
+            if in_code_fence && !is_fence_marker {
+                // Close the open code fence so this chunk renders correctly.
+                current.push_str("\n```");
+            }
             chunks.push(current);
             current = String::new();
             current_len = 0;
+            if in_code_fence && !is_fence_marker {
+                // Reopen the code fence in the new chunk.
+                current.push_str("```");
+                current_len = 3;
+            }
         }
+
         if !current.is_empty() {
             current.push('\n');
             current_len += 1;
         }
+
+        if is_fence_marker {
+            in_code_fence = !in_code_fence;
+        }
+
         // If a single line exceeds limit, hard-split on char boundaries
         if line_chars > limit {
             for ch in line.chars() {

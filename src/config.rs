@@ -1,3 +1,4 @@
+use crate::markdown::TableMode;
 use regex::Regex;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -43,6 +44,8 @@ pub struct Config {
     pub reactions: ReactionsConfig,
     #[serde(default)]
     pub stt: SttConfig,
+    #[serde(default)]
+    pub markdown: MarkdownConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -294,6 +297,20 @@ impl Default for ReactionTiming {
             stall_hard_ms: default_stall_hard_ms(), done_hold_ms: default_done_hold_ms(),
             error_hold_ms: default_error_hold_ms(),
         }
+    }
+}
+
+// --- markdown ---
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct MarkdownConfig {
+    #[serde(default)]
+    pub tables: TableMode,
+}
+
+impl Default for MarkdownConfig {
+    fn default() -> Self {
+        Self { tables: TableMode::default() }
     }
 }
 

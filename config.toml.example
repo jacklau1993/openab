@@ -79,6 +79,12 @@ working_dir = "/home/agent"
 max_sessions = 10
 session_ttl_hours = 24
 
+[markdown]
+tables = "code"  # "code" (default) | "bullets" | "off"
+                 # code: wrap tables in fenced code blocks with aligned columns
+                 # bullets: convert each row into bullet points (• Header: Value)
+                 # off: pass through unchanged
+
 [reactions]
 enabled = true
 remove_after_reply = false

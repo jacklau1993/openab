@@ -302,16 +302,10 @@ impl Default for ReactionTiming {
 
 // --- markdown ---
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct MarkdownConfig {
     #[serde(default)]
     pub tables: TableMode,
-}
-
-impl Default for MarkdownConfig {
-    fn default() -> Self {
-        Self { tables: TableMode::default() }
-    }
 }
 
 // --- loading ---

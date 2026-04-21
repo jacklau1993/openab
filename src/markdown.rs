@@ -4,21 +4,16 @@ use std::fmt;
 use unicode_width::UnicodeWidthStr;
 
 /// How to render markdown tables for a given channel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TableMode {
     /// Wrap the table in a fenced code block (default).
+    #[default]
     Code,
     /// Convert each row into bullet points.
     Bullets,
     /// Pass through unchanged.
     Off,
-}
-
-impl Default for TableMode {
-    fn default() -> Self {
-        Self::Code
-    }
 }
 
 impl fmt::Display for TableMode {
@@ -122,10 +117,8 @@ fn parse_segments(markdown: &str, mode: TableMode) -> Vec<Segment> {
             Event::Start(Tag::TableRow) => {
                 current_row.clear();
             }
-            Event::End(TagEnd::TableRow) => {
-                if !in_head {
-                    rows.push(std::mem::take(&mut current_row));
-                }
+            Event::End(TagEnd::TableRow) if !in_head => {
+                rows.push(std::mem::take(&mut current_row));
             }
             Event::Start(Tag::TableCell) => {
                 cell_buf.clear();
@@ -242,12 +235,12 @@ fn render_table_code(table: &Table, out: &mut String) {
 
 fn write_row(out: &mut String, cells: &[String], widths: &[usize], col_count: usize) {
     out.push('|');
-    for i in 0..col_count {
+    for (i, w) in widths.iter().enumerate().take(col_count) {
         out.push(' ');
         let cell = cells.get(i).map(|s| s.as_str()).unwrap_or("");
         out.push_str(cell);
         let display_width = UnicodeWidthStr::width(cell);
-        let pad = widths[i].saturating_sub(display_width);
+        let pad = w.saturating_sub(display_width);
         for _ in 0..pad {
             out.push(' ');
         }

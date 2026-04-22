@@ -1,7 +1,7 @@
 use crate::acp::ContentBlock;
 use crate::acp::protocol::ConfigOption;
 use crate::adapter::{AdapterRouter, ChatAdapter, ChannelRef, MessageRef, SenderContext};
-use crate::bot_turns::{BotTurnTracker, TurnAction, TurnSeverity};
+use crate::bot_turns::{BotTurnTracker, TurnAction, TurnSeverity, ResolvedMessageContext, TurnPolicyDecision, evaluate_bot_turn_policy};
 use crate::config::{AllowBots, AllowUsers, SttConfig};
 use crate::format;
 use crate::media;
@@ -251,67 +251,93 @@ impl EventHandler for Handler {
             cache.entry(key).or_insert_with(tokio::time::Instant::now);
         }
 
-        // Bot turn counting: runs before self-check so ALL bot messages
-        // (including own) count toward the per-thread limit. This means
-        // soft_limit=20 = 20 total bot messages in the thread (~10 per bot
-        // in a two-bot ping-pong). (#483)
-        {
-            let thread_key = msg.channel_id.to_string();
-            let mut tracker = self.bot_turns.lock().await;
-            if msg.author.bot {
-                match tracker.classify_bot_message(&thread_key) {
-                    TurnAction::Continue => {}
-                    TurnAction::SilentStop => return,
-                    TurnAction::WarnAndStop { severity, turns, user_message } => {
-                        match severity {
-                            TurnSeverity::Hard => tracing::warn!(
-                                channel_id = %msg.channel_id,
-                                turns,
-                                "hard bot turn limit reached",
-                            ),
-                            TurnSeverity::Soft => tracing::info!(
-                                channel_id = %msg.channel_id,
-                                turns,
-                                max = self.max_bot_turns,
-                                "soft bot turn limit reached",
-                            ),
-                        }
-                        // Only post the warning if this bot is allowed in the channel/thread.
-                        // Bot turn counting intentionally runs before channel gating so ALL
-                        // bot messages are counted, but the *warning message* must respect
-                        // channel permissions — otherwise bots that never participated in a
-                        // thread will spam it with warnings.
-                        //
-                        // Must match the full thread allowlist semantics: a thread is allowed
-                        // if its own channel_id OR its parent_id is in allowed_channels.
-                        let ch = msg.channel_id.get();
-                        let mut allowed_here = self.allow_all_channels
-                            || self.allowed_channels.contains(&ch);
-                        if !allowed_here {
-                            // Thread channel_id won't be in allowed_channels directly —
-                            // check parent_id via to_channel(). Only called on the
-                            // WarnAndStop path (once per soft/hard limit hit), not on
-                            // every bot message.
-                            if let Ok(serenity::model::channel::Channel::Guild(gc)) =
-                                msg.channel_id.to_channel(&ctx.http).await
-                            {
-                                if gc.parent_id.is_some_and(|pid| {
-                                    self.allowed_channels.contains(&pid.get())
-                                }) {
-                                    allowed_here = true;
-                                }
-                            }
-                        }
-                        if msg.author.id != bot_id && allowed_here {
-                            let _ = msg.channel_id.say(&ctx.http, &user_message).await;
-                        }
-                        return;
+        // --- Phase 1: Resolve message context (#531) ---
+        // Build shared context once; used by turn counting and gating.
+        let is_bot = msg.author.bot;
+        let is_self = msg.author.id == bot_id;
+        let is_human_text = !is_bot
+            && matches!(msg.kind, MessageType::Regular | MessageType::InlineReply)
+            && !msg.content.is_empty();
+
+        // Channel allowlist (full thread semantics: own id OR parent_id).
+        // The to_channel() call only happens for bot messages — human messages
+        // are gated later in the normal flow. This matches #528 behavior:
+        // to_channel() was already called on the WarnAndStop path; we now call
+        // it slightly earlier (on all bot messages) so the resolved context is
+        // available to the policy function. In practice this is cheap because
+        // serenity caches channel lookups, and bot messages that hit Continue
+        // return immediately after the policy check anyway.
+        let allowed_here = if is_bot {
+            let ch = msg.channel_id.get();
+            let mut allowed = self.allow_all_channels
+                || self.allowed_channels.contains(&ch);
+            if !allowed {
+                if let Ok(serenity::model::channel::Channel::Guild(gc)) =
+                    msg.channel_id.to_channel(&ctx.http).await
+                {
+                    if gc.parent_id.is_some_and(|pid| {
+                        self.allowed_channels.contains(&pid.get())
+                    }) {
+                        allowed = true;
                     }
                 }
-            } else if matches!(msg.kind, MessageType::Regular | MessageType::InlineReply)
-                && !msg.content.is_empty()
-            {
-                tracker.on_human_message(&thread_key);
+            }
+            allowed
+        } else {
+            true // non-bot: gating happens later in the normal flow
+        };
+
+        let turn_ctx = ResolvedMessageContext {
+            thread_key: msg.channel_id.to_string(),
+            is_bot,
+            is_self,
+            allowed_here,
+            is_human_text,
+            max_bot_turns: self.max_bot_turns,
+        };
+
+        // --- Phase 2+3: Record turns & evaluate policy (#531) ---
+        {
+            let mut tracker = self.bot_turns.lock().await;
+            match evaluate_bot_turn_policy(&mut tracker, &turn_ctx) {
+                TurnPolicyDecision::Continue
+                | TurnPolicyDecision::BotContinue
+                | TurnPolicyDecision::HumanReset => {}
+                TurnPolicyDecision::SilentStop => return,
+                TurnPolicyDecision::WarnAndStop { severity, turns, user_message } => {
+                    // --- Phase 4: Execute effects ---
+                    match severity {
+                        TurnSeverity::Hard => tracing::warn!(
+                            channel_id = %msg.channel_id,
+                            turns,
+                            "hard bot turn limit reached",
+                        ),
+                        TurnSeverity::Soft => tracing::info!(
+                            channel_id = %msg.channel_id,
+                            turns,
+                            max = self.max_bot_turns,
+                            "soft bot turn limit reached",
+                        ),
+                    }
+                    let _ = msg.channel_id.say(&ctx.http, &user_message).await;
+                    return;
+                }
+                TurnPolicyDecision::WarnAndStopSuppressed { severity, turns } => {
+                    match severity {
+                        TurnSeverity::Hard => tracing::warn!(
+                            channel_id = %msg.channel_id,
+                            turns,
+                            "hard bot turn limit reached (warning suppressed)",
+                        ),
+                        TurnSeverity::Soft => tracing::info!(
+                            channel_id = %msg.channel_id,
+                            turns,
+                            max = self.max_bot_turns,
+                            "soft bot turn limit reached (warning suppressed)",
+                        ),
+                    }
+                    return;
+                }
             }
         }
 

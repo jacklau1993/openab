@@ -4,6 +4,18 @@
 //! soft/hard limit semantics. Both counters reset on a human message in the
 //! thread. Runs before self-check so a bot's own messages count too — this
 //! means `soft_limit=20` caps the *total* bot messages in a thread, not per-bot.
+//!
+//! ## Pipeline architecture (#531)
+//!
+//! Bot turn handling is split into four phases so that counting (which must
+//! see ALL bot messages) is decoupled from warning emission (which must
+//! respect channel permissions):
+//!
+//! 1. **Resolve** — build [`ResolvedMessageContext`] once, shared by all phases.
+//! 2. **Record** — [`BotTurnTracker::classify_bot_message`] updates counters.
+//! 3. **Evaluate** — [`evaluate_bot_turn_policy`] returns a [`TurnPolicyDecision`]
+//!    with no side effects.
+//! 4. **Execute** — the adapter acts on the decision (send warning, log, return).
 
 use std::collections::HashMap;
 
@@ -117,6 +129,90 @@ pub enum TurnAction {
     /// Stop processing silently — the warning was already sent on a previous
     /// turn; further warnings would spam the thread.
     SilentStop,
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1: Resolve — shared context for all subsequent phases
+// ---------------------------------------------------------------------------
+
+/// Platform-agnostic context resolved once per incoming message.
+/// Both Discord and Slack adapters build this, then pass it to
+/// [`evaluate_bot_turn_policy`] so the decision logic is shared.
+#[derive(Debug, Clone)]
+pub struct ResolvedMessageContext {
+    /// Per-thread key used for turn counting (Discord: channel_id, Slack: thread_ts).
+    pub thread_key: String,
+    /// Whether the message author is a bot.
+    pub is_bot: bool,
+    /// Whether the message is from our own bot.
+    pub is_self: bool,
+    /// Whether this bot is allowed in the channel/thread (full allowlist semantics,
+    /// including parent_id for Discord threads).
+    pub allowed_here: bool,
+    /// Whether the message is a plain human message that should reset counters.
+    pub is_human_text: bool,
+    /// Soft limit configured for this adapter instance.
+    pub max_bot_turns: u32,
+}
+
+// ---------------------------------------------------------------------------
+// Phase 3: Evaluate — pure decision, no side effects
+// ---------------------------------------------------------------------------
+
+/// Decision returned by [`evaluate_bot_turn_policy`]. The adapter executes
+/// the decision without re-evaluating any conditions.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TurnPolicyDecision {
+    /// Message is fine, continue processing.
+    Continue,
+    /// Bot message counted, under limits, continue processing.
+    BotContinue,
+    /// Stop processing silently (already warned on a previous turn).
+    SilentStop,
+    /// Stop processing and post a warning to the thread.
+    WarnAndStop {
+        severity: TurnSeverity,
+        turns: u32,
+        user_message: String,
+    },
+    /// Stop processing — warning would be sent but bot is not allowed here.
+    /// Log only, no message posted.
+    WarnAndStopSuppressed {
+        severity: TurnSeverity,
+        turns: u32,
+    },
+    /// Human message reset the counter. Continue processing.
+    HumanReset,
+}
+
+/// Evaluate the bot turn policy for a message. This is the shared
+/// cross-adapter decision function (#531).
+///
+/// **Phase 2 (record)** happens inside this function — the tracker is mutated.
+/// **Phase 3 (evaluate)** is the return value — a pure decision.
+/// **Phase 4 (execute)** is the caller's responsibility.
+pub fn evaluate_bot_turn_policy(
+    tracker: &mut BotTurnTracker,
+    ctx: &ResolvedMessageContext,
+) -> TurnPolicyDecision {
+    if ctx.is_bot {
+        match tracker.classify_bot_message(&ctx.thread_key) {
+            TurnAction::Continue => TurnPolicyDecision::BotContinue,
+            TurnAction::SilentStop => TurnPolicyDecision::SilentStop,
+            TurnAction::WarnAndStop { severity, turns, user_message } => {
+                if ctx.is_self || !ctx.allowed_here {
+                    TurnPolicyDecision::WarnAndStopSuppressed { severity, turns }
+                } else {
+                    TurnPolicyDecision::WarnAndStop { severity, turns, user_message }
+                }
+            }
+        }
+    } else if ctx.is_human_text {
+        tracker.on_human_message(&ctx.thread_key);
+        TurnPolicyDecision::HumanReset
+    } else {
+        TurnPolicyDecision::Continue
+    }
 }
 
 #[cfg(test)]
@@ -335,5 +431,118 @@ mod tests {
             t.classify_bot_message("t1"),
             TurnAction::WarnAndStop { severity: TurnSeverity::Soft, turns: 2, .. },
         ));
+    }
+
+    // --- evaluate_bot_turn_policy tests ---
+
+    fn bot_ctx(thread_key: &str, allowed: bool) -> ResolvedMessageContext {
+        ResolvedMessageContext {
+            thread_key: thread_key.to_string(),
+            is_bot: true,
+            is_self: false,
+            allowed_here: allowed,
+            is_human_text: false,
+            max_bot_turns: 3,
+        }
+    }
+
+    fn self_bot_ctx(thread_key: &str) -> ResolvedMessageContext {
+        ResolvedMessageContext {
+            thread_key: thread_key.to_string(),
+            is_bot: true,
+            is_self: true,
+            allowed_here: true,
+            is_human_text: false,
+            max_bot_turns: 3,
+        }
+    }
+
+    fn human_ctx(thread_key: &str) -> ResolvedMessageContext {
+        ResolvedMessageContext {
+            thread_key: thread_key.to_string(),
+            is_bot: false,
+            is_self: false,
+            allowed_here: true,
+            is_human_text: true,
+            max_bot_turns: 3,
+        }
+    }
+
+    #[test]
+    fn policy_bot_continue() {
+        let mut t = BotTurnTracker::new(3);
+        let ctx = bot_ctx("t1", true);
+        assert_eq!(evaluate_bot_turn_policy(&mut t, &ctx), TurnPolicyDecision::BotContinue);
+    }
+
+    #[test]
+    fn policy_bot_warn_and_stop_when_allowed() {
+        let mut t = BotTurnTracker::new(3);
+        let ctx = bot_ctx("t1", true);
+        let _ = evaluate_bot_turn_policy(&mut t, &ctx);
+        let _ = evaluate_bot_turn_policy(&mut t, &ctx);
+        assert!(matches!(
+            evaluate_bot_turn_policy(&mut t, &ctx),
+            TurnPolicyDecision::WarnAndStop { severity: TurnSeverity::Soft, turns: 3, .. },
+        ));
+    }
+
+    #[test]
+    fn policy_bot_warn_suppressed_when_not_allowed() {
+        let mut t = BotTurnTracker::new(3);
+        let ctx = bot_ctx("t1", false);
+        let _ = evaluate_bot_turn_policy(&mut t, &ctx);
+        let _ = evaluate_bot_turn_policy(&mut t, &ctx);
+        assert_eq!(
+            evaluate_bot_turn_policy(&mut t, &ctx),
+            TurnPolicyDecision::WarnAndStopSuppressed { severity: TurnSeverity::Soft, turns: 3 },
+        );
+    }
+
+    #[test]
+    fn policy_bot_warn_suppressed_when_self() {
+        let mut t = BotTurnTracker::new(3);
+        let ctx = self_bot_ctx("t1");
+        let _ = evaluate_bot_turn_policy(&mut t, &ctx);
+        let _ = evaluate_bot_turn_policy(&mut t, &ctx);
+        assert_eq!(
+            evaluate_bot_turn_policy(&mut t, &ctx),
+            TurnPolicyDecision::WarnAndStopSuppressed { severity: TurnSeverity::Soft, turns: 3 },
+        );
+    }
+
+    #[test]
+    fn policy_silent_stop_after_warn() {
+        let mut t = BotTurnTracker::new(2);
+        let ctx = bot_ctx("t1", true);
+        let _ = evaluate_bot_turn_policy(&mut t, &ctx);
+        let _ = evaluate_bot_turn_policy(&mut t, &ctx); // WarnAndStop
+        assert_eq!(evaluate_bot_turn_policy(&mut t, &ctx), TurnPolicyDecision::SilentStop);
+    }
+
+    #[test]
+    fn policy_human_resets() {
+        let mut t = BotTurnTracker::new(3);
+        let bot = bot_ctx("t1", true);
+        let human = human_ctx("t1");
+        let _ = evaluate_bot_turn_policy(&mut t, &bot);
+        let _ = evaluate_bot_turn_policy(&mut t, &bot);
+        assert_eq!(evaluate_bot_turn_policy(&mut t, &human), TurnPolicyDecision::HumanReset);
+        assert_eq!(evaluate_bot_turn_policy(&mut t, &bot), TurnPolicyDecision::BotContinue);
+    }
+
+    #[test]
+    fn policy_non_bot_non_human_continues() {
+        let mut t = BotTurnTracker::new(3);
+        // System message: not bot, not human text
+        let ctx = ResolvedMessageContext {
+            thread_key: "t1".to_string(),
+            is_bot: false,
+            is_self: false,
+            allowed_here: true,
+            is_human_text: false,
+            max_bot_turns: 3,
+        };
+        assert_eq!(evaluate_bot_turn_policy(&mut t, &ctx), TurnPolicyDecision::Continue);
     }
 }

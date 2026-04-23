@@ -1,10 +1,10 @@
 # ADR-001: Agent Cognitive Architecture Specification (ACAS)
 
 - **Status**: Proposed
-- **Spec Version**: 1.1.0
+- **Spec Version**: 1.2.0
 - **Date**: 2026-04-23
 - **Author**: pahud.hsieh
-- **Revision**: Incorporates review feedback from 周嘟嘟, 小喬, 諸葛亮, shaun-agent screening
+- **Revision**: Incorporates review feedback from 周嘟嘟, 小喬, 諸葛亮, 張飛, shaun-agent screening, and Discord live review session
 
 ## Key Words
 
@@ -53,7 +53,7 @@ Every agent MUST maintain a self-identity definition that answers: **"Who am I?"
 ### Required vs Optional Identity Fields
 
 ```yaml
-spec_version: "1.1.0"           # REQUIRED — spec version this identity conforms to
+spec_version: "1.2.0"           # REQUIRED — spec version this identity conforms to
 identity:
   name: ""                       # REQUIRED — agent's name (how it refers to itself)
   uid: ""                        # REQUIRED — unique identifier (platform-specific, e.g. Discord UID)
@@ -70,6 +70,7 @@ identity:
 
 - **Consistency**: Agents MUST respond in a manner consistent with defined personality across all interactions.
 - **Self-reference**: Agents MUST refer to themselves by `name`, never by underlying model or framework name.
+- **Identity–UID binding**: Persona, nickname, and display name are NOT interchangeable with UID. An agent MUST always use its own verified `uid` when self-referencing in structured contexts (e.g. mentions, peer registry entries). Mapping `persona != UID` and `nickname != identity` MUST be enforced — mixing them is the root cause of identity confusion in multi-agent environments.
 - **Boundaries**: Identity definition SHOULD include what the agent will NOT do.
 
 ### 1.2 Capability Version Format
@@ -88,9 +89,10 @@ Matching rules:
 When a new agent starts for the first time:
 
 1. Check if `identity.yaml` exists. If not, generate one from environment config or prompt the operator.
-2. Register itself in the peer registry (see §2).
-3. If Level 3: announce presence via the handshake protocol (see §2.2).
-4. Initialize the knowledge database (create SQLite tables if missing).
+2. **UID Validation**: The agent MUST verify that `identity.uid` matches its actual platform `sender_id` at runtime. If they differ, the agent MUST refuse to start and log an error. This prevents identity spoofing and the "wrong UID" class of bugs where an agent claims to be someone else.
+3. Register itself in the peer registry (see §2).
+4. If Level 3: announce presence via the handshake protocol (see §2.2).
+5. Initialize the knowledge database (create SQLite tables if missing).
 
 ### 1.4 Migration Note
 
@@ -149,6 +151,8 @@ Agents MAY periodically re-announce to signal liveness. Peers not seen within a 
 
 ### 2.3 Social Rules
 
+- **Single Source of Truth**: The peer registry (`peers.yaml` or shared registry) is the authoritative identity mapping. Agents MUST NOT maintain divergent local copies of peer UID-to-name mappings. When in doubt, agents MUST consult the registry rather than relying on cached or memorized associations.
+- **Mention Completeness**: When an agent references another agent in a message, it MUST use the correct platform `mention_syntax` from the peer registry. Omitting a mention or using an incorrect UID is a protocol violation — it degrades traceability and opens the door to identity confusion.
 - **Discovery**: Agents query the peer registry to find who can help with a given task.
 - **Mention Protocol**: Agents MUST use the platform's `mention_syntax` when referencing another agent.
 - **Delegation**: An agent MAY delegate tasks to peers with user consent.
@@ -440,6 +444,7 @@ An implementation is conformant at a given level if it satisfies all of the foll
 
 ### Level 1 — Identity + Recall
 - [ ] `identity.yaml` exists with all REQUIRED fields populated
+- [ ] `identity.uid` is validated against actual platform `sender_id` at startup
 - [ ] `capabilities` field uses `<tool>:v<major>` format
 - [ ] `knowledge/` directory contains `.md` files with Changelog sections
 - [ ] `memory.db` contains `knowledge_files` and `knowledge_fts` tables with `owner_uid` column
@@ -450,6 +455,8 @@ An implementation is conformant at a given level if it satisfies all of the foll
 ### Level 2 — Full Knowledge
 - [ ] All Level 1 criteria
 - [ ] `peers.yaml` exists with at least the agent's own entry
+- [ ] Peer registry is treated as single source of truth for UID-to-name mappings
+- [ ] Mentions use correct `mention_syntax` from peer registry (no omissions, no wrong UIDs)
 - [ ] `/remember` appends to daily log and updates knowledge files + index
 - [ ] `/remember` sets `owner_uid` on all created/updated records
 - [ ] `/reflect` processes `pending` logs with three-state tracking (pending → processing → done)

@@ -169,6 +169,8 @@ pub struct GatewayConfig {
     pub platform: String,
     /// Shared token for WebSocket authentication (optional but recommended)
     pub token: Option<String>,
+    /// Bot username for @mention gating in groups (e.g. "my_bot")
+    pub bot_username: Option<String>,
 }
 
 fn default_gateway_platform() -> String {

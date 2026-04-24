@@ -14,8 +14,14 @@ A lightweight, secure, cloud-native ACP harness that bridges **Discord, Slack**,
 │   User       │               │    openab    │◄── JSON-RPC ──│  (acp mode)  │
 ├──────────────┤  Socket Mode  │    (Rust)    │               └──────────────┘
 │   Slack      │◄─────────────►│              │
-│   User       │               └──────────────┘
-└──────────────┘
+│   User       │               └──────┬───────┘
+├──────────────┤                      │ WebSocket (outbound)
+│   Telegram   │◄──webhook──┐         │
+│   User       │            ▼         ▼
+└──────────────┘     ┌──────────────────┐
+                     │  Custom Gateway  │
+                     │  (standalone)    │
+                     └──────────────────┘
 ```
 
 ## Demo
@@ -50,6 +56,13 @@ See [docs/discord.md](docs/discord.md) for a detailed step-by-step guide.
 <summary><strong>Slack</strong></summary>
 
 See [docs/slack-bot-howto.md](docs/slack-bot-howto.md) for a detailed step-by-step guide.
+
+</details>
+
+<details>
+<summary><strong>Telegram</strong> (via Custom Gateway)</summary>
+
+See [docs/telegram.md](docs/telegram.md) for the full setup guide. Requires the standalone [Custom Gateway](gateway/) service.
 
 </details>
 

@@ -22,6 +22,7 @@ pub struct GatewayEvent {
     pub channel: ChannelInfo,
     pub sender: SenderInfo,
     pub content: Content,
+    pub mentions: Vec<String>,
     pub message_id: String,
 }
 
@@ -93,6 +94,16 @@ struct TelegramMessage {
     chat: TelegramChat,
     from: Option<TelegramUser>,
     text: Option<String>,
+    #[serde(default)]
+    entities: Vec<TelegramEntity>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TelegramEntity {
+    #[serde(rename = "type")]
+    entity_type: String,
+    offset: usize,
+    length: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -116,6 +127,7 @@ struct TelegramUser {
 
 struct AppState {
     bot_token: String,
+    secret_token: Option<String>,
     /// Broadcast channel: gateway → OAB (events)
     event_tx: broadcast::Sender<String>,
     /// Collected reply senders from connected OAB clients
@@ -126,17 +138,28 @@ struct AppState {
 
 async fn telegram_webhook(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     Json(update): Json<TelegramUpdate>,
-) -> &'static str {
+) -> axum::http::StatusCode {
+    // Validate secret_token if configured
+    if let Some(ref expected) = state.secret_token {
+        let provided = headers
+            .get("x-telegram-bot-api-secret-token")
+            .and_then(|v| v.to_str().ok());
+        if provided != Some(expected.as_str()) {
+            warn!("webhook rejected: invalid or missing secret_token");
+            return axum::http::StatusCode::UNAUTHORIZED;
+        }
+    }
     let Some(msg) = update.message else {
-        return "ok";
+        return axum::http::StatusCode::OK;
     };
     let Some(text) = msg.text.as_deref() else {
-        return "ok";
+        return axum::http::StatusCode::OK;
     };
     // Skip empty messages
     if text.trim().is_empty() {
-        return "ok";
+        return axum::http::StatusCode::OK;
     }
 
     let from = msg.from.as_ref();
@@ -153,6 +176,17 @@ async fn telegram_webhook(
             n
         })
         .unwrap_or_else(|| "Unknown".into());
+
+    // Extract @mentions from entities
+    let mentions: Vec<String> = msg
+        .entities
+        .iter()
+        .filter(|e| e.entity_type == "mention")
+        .filter_map(|e| {
+            text.get(e.offset..e.offset + e.length)
+                .map(|s| s.trim_start_matches('@').to_string())
+        })
+        .collect();
 
     let event = GatewayEvent {
         schema: "openab.gateway.event.v1".into(),
@@ -175,13 +209,14 @@ async fn telegram_webhook(
             content_type: "text".into(),
             text: text.into(),
         },
+        mentions,
         message_id: msg.message_id.to_string(),
     };
 
     let json = serde_json::to_string(&event).unwrap();
     info!(chat_id = %msg.chat.id, sender = %sender_name, "telegram → gateway");
     let _ = state.event_tx.send(json);
-    "ok"
+    axum::http::StatusCode::OK
 }
 
 // --- WebSocket handler (OAB connects here) ---
@@ -332,15 +367,21 @@ async fn main() -> Result<()> {
 
     let bot_token = std::env::var("TELEGRAM_BOT_TOKEN")
         .expect("TELEGRAM_BOT_TOKEN must be set");
+    let secret_token = std::env::var("TELEGRAM_SECRET_TOKEN").ok();
     let listen_addr = std::env::var("GATEWAY_LISTEN")
         .unwrap_or_else(|_| "0.0.0.0:8080".into());
     let webhook_path = std::env::var("TELEGRAM_WEBHOOK_PATH")
         .unwrap_or_else(|_| "/webhook/telegram".into());
 
+    if secret_token.is_none() {
+        warn!("TELEGRAM_SECRET_TOKEN not set — webhook requests are NOT validated (insecure)");
+    }
+
     let (event_tx, _) = broadcast::channel::<String>(256);
 
     let state = Arc::new(AppState {
         bot_token,
+        secret_token,
         event_tx,
         reply_handlers: Mutex::new(Vec::new()),
     });

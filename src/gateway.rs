@@ -20,6 +20,8 @@ struct GatewayEvent {
     channel: GwChannel,
     sender: GwSender,
     content: GwContent,
+    #[serde(default)]
+    mentions: Vec<String>,
     message_id: String,
 }
 
@@ -220,24 +222,48 @@ pub async fn run_gateway_adapter(
     router: Arc<AdapterRouter>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-    info!(url = %gateway_url, "connecting to custom gateway");
-
-    let (ws_stream, _) = tokio_tungstenite::connect_async(&gateway_url).await?;
-    info!("connected to gateway");
-
-    let (ws_tx, mut ws_rx) = ws_stream.split();
-    let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
-    let adapter: Arc<dyn ChatAdapter> = Arc::new(GatewayAdapter::new(ws_tx, pending.clone()));
+    let mut backoff_secs = 1u64;
+    const MAX_BACKOFF: u64 = 30;
 
     loop {
-        tokio::select! {
-            msg = ws_rx.next() => {
-                match msg {
-                    Some(Ok(Message::Text(text))) => {
-                        let text_str: &str = &text;
+        // Check shutdown before connecting
+        if *shutdown_rx.borrow() {
+            info!("gateway adapter shutting down");
+            return Ok(());
+        }
 
-                        // Check if it's a response to a pending command
-                        if let Ok(resp) = serde_json::from_str::<GatewayResponse>(text_str) {
+        info!(url = %gateway_url, "connecting to custom gateway");
+
+        let ws_stream = match tokio_tungstenite::connect_async(&gateway_url).await {
+            Ok((stream, _)) => {
+                backoff_secs = 1; // reset on success
+                info!("connected to gateway");
+                stream
+            }
+            Err(e) => {
+                error!(err = %e, backoff = backoff_secs, "gateway connection failed, retrying");
+                tokio::select! {
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)) => {}
+                    _ = shutdown_rx.changed() => { return Ok(()); }
+                }
+                backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF);
+                continue;
+            }
+        };
+
+        let (ws_tx, mut ws_rx) = ws_stream.split();
+        let pending: PendingRequests = Arc::new(Mutex::new(HashMap::new()));
+        let adapter: Arc<dyn ChatAdapter> = Arc::new(GatewayAdapter::new(ws_tx, pending.clone()));
+
+        loop {
+            tokio::select! {
+                msg = ws_rx.next() => {
+                    match msg {
+                        Some(Ok(Message::Text(text))) => {
+                            let text_str: &str = &text;
+
+                            // Check if it's a response to a pending command
+                            if let Ok(resp) = serde_json::from_str::<GatewayResponse>(text_str) {
                             if resp.schema == "openab.gateway.response.v1" {
                                 if let Some(tx) = pending.lock().await.remove(&resp.request_id) {
                                     let _ = tx.send(resp);
@@ -324,11 +350,11 @@ pub async fn run_gateway_adapter(
                         }
                     }
                     Some(Ok(Message::Close(_))) | None => {
-                        warn!("gateway WebSocket closed");
+                        warn!("gateway WebSocket closed, will reconnect");
                         break;
                     }
                     Some(Err(e)) => {
-                        error!("gateway WebSocket error: {e}");
+                        error!("gateway WebSocket error: {e}, will reconnect");
                         break;
                     }
                     _ => {}
@@ -337,10 +363,17 @@ pub async fn run_gateway_adapter(
             _ = shutdown_rx.changed() => {
                 if *shutdown_rx.borrow() {
                     info!("gateway adapter shutting down");
-                    break;
+                    return Ok(());
                 }
             }
         }
-    }
-    Ok(())
+    } // inner loop — break here means reconnect
+
+        warn!(backoff = backoff_secs, "reconnecting to gateway");
+        tokio::select! {
+            _ = tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)) => {}
+            _ = shutdown_rx.changed() => { return Ok(()); }
+        }
+        backoff_secs = (backoff_secs * 2).min(MAX_BACKOFF);
+    } // outer reconnect loop
 }

@@ -398,6 +398,7 @@ async fn handle_oab_connection(state: Arc<AppState>, socket: axum::extract::ws::
                                 "chat_id": reply.channel.id,
                                 "text": reply.content.text,
                                 "message_thread_id": reply.channel.thread_id,
+                                "parse_mode": "Markdown",
                             }))
                             .send()
                             .await

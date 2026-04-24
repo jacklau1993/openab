@@ -3,15 +3,15 @@
 A standalone service that bridges webhook-based platforms and custom event sources to OAB via WebSocket. OAB connects outbound to the gateway — no inbound ports or TLS required on OAB.
 
 ```
-                External (HTTPS)                    Internal (cluster)
-                ────────────────                    ──────────────────
+                 External (HTTPS)                    Internal (cluster)
+                 ────────────────                    ──────────────────
 
-Telegram  ──POST──▶ ┌─────────────────────┐
-LINE      ──POST──▶ │                     │
-GitHub    ──POST──▶ │   Custom Gateway    │ ◀──WebSocket── OAB Pod
-CI/CD     ──POST──▶ │     :8080           │    (OAB connects out)
-curl/cron ──POST──▶ │                     │
-                     └─────────────────────┘
+Telegram  ──POST──▶┌─────────────────────┐
+LINE      ──POST──▶│                     │
+GitHub    ──POST──▶│   Custom Gateway    │◀──WebSocket── OAB Pod
+CI/CD     ──POST──▶│     :8080           │   (OAB connects out)
+curl/cron ──POST──▶│                     │
+                    └─────────────────────┘
 
 Discord  ◀──WebSocket── OAB Pod  (unchanged, direct)
 Slack    ◀──WebSocket── OAB Pod  (unchanged, direct)

@@ -332,6 +332,34 @@ async fn handle_oab_connection(state: Arc<AppState>, socket: axum::extract::ws::
                             continue;
                         }
 
+                        // Handle add_reaction / remove_reaction
+                        if reply.command.as_deref() == Some("add_reaction")
+                            || reply.command.as_deref() == Some("remove_reaction")
+                        {
+                            let emoji = &reply.content.text;
+                            let is_add = reply.command.as_deref() == Some("add_reaction");
+                            let reactions = if is_add {
+                                serde_json::json!([{"type": "emoji", "emoji": emoji}])
+                            } else {
+                                serde_json::json!([])
+                            };
+                            let url = format!(
+                                "https://api.telegram.org/bot{}/setMessageReaction",
+                                bot_token
+                            );
+                            let _ = client
+                                .post(&url)
+                                .json(&serde_json::json!({
+                                    "chat_id": reply.channel.id,
+                                    "message_id": reply.reply_to,
+                                    "reaction": reactions,
+                                }))
+                                .send()
+                                .await
+                                .map_err(|e| error!("telegram reaction error: {e}"));
+                            continue;
+                        }
+
                         // Normal send_message
                         info!(chat_id = %reply.channel.id, thread_id = ?reply.channel.thread_id, "gateway → telegram");
                         let url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);

@@ -209,12 +209,46 @@ impl ChatAdapter for GatewayAdapter {
         }
     }
 
-    async fn add_reaction(&self, _msg: &MessageRef, _emoji: &str) -> Result<()> {
-        Ok(()) // no-op for PoC
+    async fn add_reaction(&self, msg: &MessageRef, emoji: &str) -> Result<()> {
+        let reply = GatewayReply {
+            schema: "openab.gateway.reply.v1".into(),
+            reply_to: msg.message_id.clone(),
+            platform: msg.channel.platform.clone(),
+            channel: ReplyChannel {
+                id: msg.channel.channel_id.clone(),
+                thread_id: msg.channel.thread_id.clone(),
+            },
+            content: ReplyContent {
+                content_type: "text".into(),
+                text: emoji.into(),
+            },
+            command: Some("add_reaction".into()),
+            request_id: None,
+        };
+        let json = serde_json::to_string(&reply)?;
+        self.ws_tx.lock().await.send(Message::Text(json)).await?;
+        Ok(())
     }
 
-    async fn remove_reaction(&self, _msg: &MessageRef, _emoji: &str) -> Result<()> {
-        Ok(()) // no-op for PoC
+    async fn remove_reaction(&self, msg: &MessageRef, emoji: &str) -> Result<()> {
+        let reply = GatewayReply {
+            schema: "openab.gateway.reply.v1".into(),
+            reply_to: msg.message_id.clone(),
+            platform: msg.channel.platform.clone(),
+            channel: ReplyChannel {
+                id: msg.channel.channel_id.clone(),
+                thread_id: msg.channel.thread_id.clone(),
+            },
+            content: ReplyContent {
+                content_type: "text".into(),
+                text: emoji.into(),
+            },
+            command: Some("remove_reaction".into()),
+            request_id: None,
+        };
+        let json = serde_json::to_string(&reply)?;
+        self.ws_tx.lock().await.send(Message::Text(json)).await?;
+        Ok(())
     }
 
     fn use_streaming(&self, _other_bot_present: bool) -> bool {
@@ -228,6 +262,7 @@ pub async fn run_gateway_adapter(
     gateway_url: String,
     platform_name: String,
     ws_token: Option<String>,
+    bot_username: Option<String>,
     router: Arc<AdapterRouter>,
     mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
@@ -302,6 +337,21 @@ pub async fn run_gateway_adapter(
                                     if event.sender.is_bot {
                                         continue; // skip bot messages
                                     }
+
+                                    // @mention gating: in groups, only respond if bot is mentioned
+                                    // DMs (private) and thread replies always pass through
+                                    let is_group = event.channel.channel_type == "group"
+                                        || event.channel.channel_type == "supergroup";
+                                    let in_thread = event.channel.thread_id.is_some();
+                                    if is_group && !in_thread {
+                                        if let Some(ref bot_name) = bot_username {
+                                            let mentioned = event.mentions.iter().any(|m| m == bot_name);
+                                            if !mentioned {
+                                                continue; // skip non-mentioned group messages
+                                            }
+                                        }
+                                    }
+
                                     info!(
                                         platform = %event.platform,
                                         sender = %event.sender.name,

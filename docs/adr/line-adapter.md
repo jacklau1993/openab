@@ -2,7 +2,7 @@
 
 - **Status:** Proposed
 - **Date:** 2026-04-22
-- **Author:** (TBD)
+- **Author:** @chaodu-agent
 
 ---
 

@@ -1,8 +1,8 @@
 use anyhow::Result;
 use axum::{
-    Json, Router,
     extract::State,
     routing::{get, post},
+    Json, Router,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -281,9 +281,11 @@ async fn handle_oab_connection(state: Arc<AppState>, socket: axum::extract::ws::
                                 .await;
                             let gw_resp = match resp {
                                 Ok(r) => {
-                                    let body: serde_json::Value = r.json().await.unwrap_or_default();
+                                    let body: serde_json::Value =
+                                        r.json().await.unwrap_or_default();
                                     if body["ok"].as_bool() == Some(true) {
-                                        let tid = body["result"]["message_thread_id"].as_i64()
+                                        let tid = body["result"]["message_thread_id"]
+                                            .as_i64()
                                             .map(|id| id.to_string());
                                         info!(thread_id = ?tid, "forum topic created");
                                         GatewayResponse {
@@ -294,8 +296,10 @@ async fn handle_oab_connection(state: Arc<AppState>, socket: axum::extract::ws::
                                             error: None,
                                         }
                                     } else {
-                                        let err = body["description"].as_str()
-                                            .unwrap_or("unknown error").to_string();
+                                        let err = body["description"]
+                                            .as_str()
+                                            .unwrap_or("unknown error")
+                                            .to_string();
                                         warn!(err = %err, "createForumTopic failed");
                                         GatewayResponse {
                                             schema: "openab.gateway.response.v1".into(),
@@ -322,10 +326,7 @@ async fn handle_oab_connection(state: Arc<AppState>, socket: axum::extract::ws::
 
                         // Normal send_message
                         info!(chat_id = %reply.channel.id, thread_id = ?reply.channel.thread_id, "gateway → telegram");
-                        let url = format!(
-                            "https://api.telegram.org/bot{}/sendMessage",
-                            bot_token
-                        );
+                        let url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
                         let _ = client
                             .post(&url)
                             .json(&serde_json::json!({
@@ -360,18 +361,15 @@ async fn health() -> &'static str {
 async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
 
-    let bot_token = std::env::var("TELEGRAM_BOT_TOKEN")
-        .expect("TELEGRAM_BOT_TOKEN must be set");
+    let bot_token = std::env::var("TELEGRAM_BOT_TOKEN").expect("TELEGRAM_BOT_TOKEN must be set");
     let secret_token = std::env::var("TELEGRAM_SECRET_TOKEN").ok();
-    let listen_addr = std::env::var("GATEWAY_LISTEN")
-        .unwrap_or_else(|_| "0.0.0.0:8080".into());
-    let webhook_path = std::env::var("TELEGRAM_WEBHOOK_PATH")
-        .unwrap_or_else(|_| "/webhook/telegram".into());
+    let listen_addr = std::env::var("GATEWAY_LISTEN").unwrap_or_else(|_| "0.0.0.0:8080".into());
+    let webhook_path =
+        std::env::var("TELEGRAM_WEBHOOK_PATH").unwrap_or_else(|_| "/webhook/telegram".into());
 
     if secret_token.is_none() {
         warn!("TELEGRAM_SECRET_TOKEN not set — webhook requests are NOT validated (insecure)");

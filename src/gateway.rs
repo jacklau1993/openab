@@ -1,4 +1,4 @@
-use crate::adapter::{AdapterRouter, ChatAdapter, ChannelRef, MessageRef, SenderContext};
+use crate::adapter::{AdapterRouter, ChannelRef, ChatAdapter, MessageRef, SenderContext};
 use anyhow::Result;
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
@@ -91,17 +91,23 @@ struct GatewayResponse {
 type PendingRequests = Arc<Mutex<HashMap<String, tokio::sync::oneshot::Sender<GatewayResponse>>>>;
 
 pub struct GatewayAdapter {
-    ws_tx: Mutex<futures_util::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
-        Message,
-    >>,
+    ws_tx: Mutex<
+        futures_util::stream::SplitSink<
+            tokio_tungstenite::WebSocketStream<
+                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+            >,
+            Message,
+        >,
+    >,
     pending: PendingRequests,
 }
 
 impl GatewayAdapter {
     fn new(
         ws_tx: futures_util::stream::SplitSink<
-            tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+            tokio_tungstenite::WebSocketStream<
+                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+            >,
             Message,
         >,
         pending: PendingRequests,
@@ -178,18 +184,20 @@ impl ChatAdapter for GatewayAdapter {
             request_id: Some(req_id.clone()),
         };
         let json = serde_json::to_string(&reply)?;
-        self.ws_tx.lock().await.send(Message::Text(json.into())).await?;
+        self.ws_tx
+            .lock()
+            .await
+            .send(Message::Text(json.into()))
+            .await?;
 
         // Wait for response (5s timeout)
         match tokio::time::timeout(std::time::Duration::from_secs(5), rx).await {
-            Ok(Ok(resp)) if resp.success => {
-                Ok(ChannelRef {
-                    platform: channel.platform.clone(),
-                    channel_id: channel.channel_id.clone(),
-                    thread_id: resp.thread_id,
-                    parent_id: None,
-                })
-            }
+            Ok(Ok(resp)) if resp.success => Ok(ChannelRef {
+                platform: channel.platform.clone(),
+                channel_id: channel.channel_id.clone(),
+                thread_id: resp.thread_id,
+                parent_id: None,
+            }),
             Ok(Ok(resp)) => {
                 warn!(err = ?resp.error, "create_topic failed, falling back to same channel");
                 Ok(channel.clone())
@@ -257,117 +265,117 @@ pub async fn run_gateway_adapter(
 
         loop {
             tokio::select! {
-                msg = ws_rx.next() => {
-                    match msg {
-                        Some(Ok(Message::Text(text))) => {
-                            let text_str: &str = &text;
+                    msg = ws_rx.next() => {
+                        match msg {
+                            Some(Ok(Message::Text(text))) => {
+                                let text_str: &str = &text;
 
-                            // Check if it's a response to a pending command
-                            if let Ok(resp) = serde_json::from_str::<GatewayResponse>(text_str) {
-                            if resp.schema == "openab.gateway.response.v1" {
-                                if let Some(tx) = pending.lock().await.remove(&resp.request_id) {
-                                    let _ = tx.send(resp);
+                                // Check if it's a response to a pending command
+                                if let Ok(resp) = serde_json::from_str::<GatewayResponse>(text_str) {
+                                if resp.schema == "openab.gateway.response.v1" {
+                                    if let Some(tx) = pending.lock().await.remove(&resp.request_id) {
+                                        let _ = tx.send(resp);
+                                    }
+                                    continue;
                                 }
-                                continue;
                             }
-                        }
 
-                        match serde_json::from_str::<GatewayEvent>(text_str) {
-                            Ok(event) => {
-                                if event.sender.is_bot {
-                                    continue; // skip bot messages
-                                }
-                                info!(
-                                    platform = %event.platform,
-                                    sender = %event.sender.name,
-                                    channel = %event.channel.id,
-                                    "gateway event received"
-                                );
+                            match serde_json::from_str::<GatewayEvent>(text_str) {
+                                Ok(event) => {
+                                    if event.sender.is_bot {
+                                        continue; // skip bot messages
+                                    }
+                                    info!(
+                                        platform = %event.platform,
+                                        sender = %event.sender.name,
+                                        channel = %event.channel.id,
+                                        "gateway event received"
+                                    );
 
-                                let channel = ChannelRef {
-                                    platform: event.platform.clone(),
-                                    channel_id: event.channel.id.clone(),
-                                    thread_id: event.channel.thread_id.clone(),
-                                    parent_id: None,
-                                };
-
-                                let sender_ctx = SenderContext {
-                                    schema: "sender.v1".into(),
-                                    sender_id: event.sender.id.clone(),
-                                    sender_name: event.sender.name.clone(),
-                                    display_name: event.sender.display_name.clone(),
-                                    channel: event.channel.channel_type.clone(),
-                                    channel_id: event.channel.id.clone(),
-                                    thread_id: event.channel.thread_id.clone(),
-                                    is_bot: event.sender.is_bot,
-                                };
-                                let sender_json = serde_json::to_string(&sender_ctx)
-                                    .unwrap_or_default();
-
-                                let trigger_msg = MessageRef {
-                                    channel: channel.clone(),
-                                    message_id: event.message_id.clone(),
-                                };
-
-                                let adapter = adapter.clone();
-                                let router = router.clone();
-                                let prompt = event.content.text.clone();
-
-                                tokio::spawn(async move {
-                                    // If supergroup with no thread_id, create a forum topic
-                                    let thread_channel = if event.channel.channel_type == "supergroup"
-                                        && channel.thread_id.is_none()
-                                    {
-                                        let title = crate::format::shorten_thread_name(&prompt);
-                                        match adapter.create_thread(&channel, &trigger_msg, &title).await {
-                                            Ok(tc) => tc,
-                                            Err(e) => {
-                                                warn!("create_thread failed, using channel: {e}");
-                                                channel.clone()
-                                            }
-                                        }
-                                    } else {
-                                        channel.clone()
+                                    let channel = ChannelRef {
+                                        platform: event.platform.clone(),
+                                        channel_id: event.channel.id.clone(),
+                                        thread_id: event.channel.thread_id.clone(),
+                                        parent_id: None,
                                     };
 
-                                    if let Err(e) = router
-                                        .handle_message(
-                                            &adapter,
-                                            &thread_channel,
-                                            &sender_json,
-                                            &prompt,
-                                            vec![],
-                                            &trigger_msg,
-                                            false,
-                                        )
-                                        .await
-                                    {
-                                        error!("gateway message handling error: {e}");
-                                    }
-                                });
+                                    let sender_ctx = SenderContext {
+                                        schema: "sender.v1".into(),
+                                        sender_id: event.sender.id.clone(),
+                                        sender_name: event.sender.name.clone(),
+                                        display_name: event.sender.display_name.clone(),
+                                        channel: event.channel.channel_type.clone(),
+                                        channel_id: event.channel.id.clone(),
+                                        thread_id: event.channel.thread_id.clone(),
+                                        is_bot: event.sender.is_bot,
+                                    };
+                                    let sender_json = serde_json::to_string(&sender_ctx)
+                                        .unwrap_or_default();
+
+                                    let trigger_msg = MessageRef {
+                                        channel: channel.clone(),
+                                        message_id: event.message_id.clone(),
+                                    };
+
+                                    let adapter = adapter.clone();
+                                    let router = router.clone();
+                                    let prompt = event.content.text.clone();
+
+                                    tokio::spawn(async move {
+                                        // If supergroup with no thread_id, create a forum topic
+                                        let thread_channel = if event.channel.channel_type == "supergroup"
+                                            && channel.thread_id.is_none()
+                                        {
+                                            let title = crate::format::shorten_thread_name(&prompt);
+                                            match adapter.create_thread(&channel, &trigger_msg, &title).await {
+                                                Ok(tc) => tc,
+                                                Err(e) => {
+                                                    warn!("create_thread failed, using channel: {e}");
+                                                    channel.clone()
+                                                }
+                                            }
+                                        } else {
+                                            channel.clone()
+                                        };
+
+                                        if let Err(e) = router
+                                            .handle_message(
+                                                &adapter,
+                                                &thread_channel,
+                                                &sender_json,
+                                                &prompt,
+                                                vec![],
+                                                &trigger_msg,
+                                                false,
+                                            )
+                                            .await
+                                        {
+                                            error!("gateway message handling error: {e}");
+                                        }
+                                    });
+                                }
+                                Err(e) => warn!("invalid gateway event: {e}"),
                             }
-                            Err(e) => warn!("invalid gateway event: {e}"),
                         }
+                        Some(Ok(Message::Close(_))) | None => {
+                            warn!("gateway WebSocket closed, will reconnect");
+                            break;
+                        }
+                        Some(Err(e)) => {
+                            error!("gateway WebSocket error: {e}, will reconnect");
+                            break;
+                        }
+                        _ => {}
                     }
-                    Some(Ok(Message::Close(_))) | None => {
-                        warn!("gateway WebSocket closed, will reconnect");
-                        break;
+                }
+                _ = shutdown_rx.changed() => {
+                    if *shutdown_rx.borrow() {
+                        info!("gateway adapter shutting down");
+                        return Ok(());
                     }
-                    Some(Err(e)) => {
-                        error!("gateway WebSocket error: {e}, will reconnect");
-                        break;
-                    }
-                    _ => {}
                 }
             }
-            _ = shutdown_rx.changed() => {
-                if *shutdown_rx.borrow() {
-                    info!("gateway adapter shutting down");
-                    return Ok(());
-                }
-            }
-        }
-    } // inner loop — break here means reconnect
+        } // inner loop — break here means reconnect
 
         warn!(backoff = backoff_secs, "reconnecting to gateway");
         tokio::select! {

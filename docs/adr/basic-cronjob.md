@@ -179,6 +179,25 @@ Rendered into `config.toml` via the existing Helm ConfigMap template.
 - Standard 5-field cron syntax (minute, hour, day-of-month, month, day-of-week) — same format as Linux crontab, Kubernetes CronJob, and GitHub Actions
 - Timezone support via optional `timezone` field (defaults to UTC)
 
+### Cron Expression Format
+
+The schedule field uses standard POSIX cron syntax, compatible with:
+
+- Linux `crontab -e`
+- Kubernetes `CronJob.spec.schedule`
+- GitHub Actions `cron:`
+- AWS EventBridge `cron()` (slightly different wrapper but same fields)
+
+```
+┌───────────── minute (0–59)
+│ ┌───────────── hour (0–23)
+│ │ ┌───────────── day of month (1–31)
+│ │ │ ┌───────────── month (1–12)
+│ │ │ │ ┌───────────── day of week (0–7, 0 and 7 = Sunday)
+│ │ │ │ │
+* * * * *
+```
+
 ### Explicitly Out of Scope
 
 | Feature | Reason | Alternative |

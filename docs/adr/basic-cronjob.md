@@ -59,6 +59,7 @@ channel = "123456789"                        # target channel ID
 message = "summarize yesterday's merged PRs" # message sent to agent
 platform = "discord"                         # optional, defaults to first configured
 sender_name = "CronScheduler"               # optional, defaults to "openab-cron"
+thread_id = "1234567890"                     # optional, post to existing thread
 
 [[cronjobs]]
 schedule = "0 0 * * 0"
@@ -72,6 +73,7 @@ channel = "C0123456789"
 message = "check for any critical alerts in the last 8 hours"
 platform = "slack"
 sender_name = "OpsBot"
+thread_id = "1714000000.000000"              # Slack thread_ts
 ```
 
 ### Sender Identity
@@ -126,7 +128,7 @@ This helps the agent distinguish scheduled prompts from interactive users, and o
 2. **Session creation** — when a cron fires, OAB creates (or reuses) a session for the target channel, identical to a user-initiated session
 3. **Message injection** — the configured message is injected as if a user sent it in the channel
 4. **Reply delivery** — agent response is posted to the target channel via the normal platform adapter
-5. **Thread creation** — each cron execution creates a new thread (Discord) or thread reply (Slack), keeping cron outputs organized
+5. **Thread creation** — each cron execution creates a new thread (Discord) or thread reply (Slack), keeping cron outputs organized. If `thread_id` is specified, the reply is posted to that existing thread instead (useful for accumulating recurring results in one place).
 6. **Isolation** — cron execution uses the same session pool with standard concurrency limits; a stuck cron job does not starve interactive sessions
 7. **Logging** — each cron tick emits structured logs: `DEBUG` for expression evaluation, `INFO` for fired jobs (schedule, channel, message), `WARN`/`ERROR` for failures (session creation failed, channel not found, agent timeout)
 

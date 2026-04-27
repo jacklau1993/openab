@@ -42,6 +42,26 @@ If the requester has ideas on implementation:
 - Note any constraints or compatibility concerns
 - Use ASCII diagrams for architecture/flow if helpful
 
+### 4. Prior Art (optional)
+
+Reference similar features in related projects or ecosystems:
+- How does OpenClaw, Hermes Agent, or another project handle this?
+- Link to relevant docs, issues, or implementations
+- Note what worked well and what didn't
+
+This helps maintainers evaluate approaches and avoid known pitfalls.
+
+### 5. Related Issues
+
+Search existing issues and reference any that are related:
+- Duplicates or near-duplicates
+- Issues that this feature would complement or depend on
+- Issues that this feature could supersede
+
+Based on what already exists, consider whether the FR scope should be
+adjusted to better fit the product direction — narrower, broader, or
+reframed as an extension of existing work.
+
 ## Submission Format
 
 ```bash
@@ -58,7 +78,15 @@ gh issue create --repo openabdev/openab \
 
 ### Proposed Solution
 
-<proposed solution or remove section if none>'
+<proposed solution or remove section if none>
+
+### Prior Art
+
+<prior art or remove section if none>
+
+### Related Issues
+
+<related issues or "None found.">'
 ```
 
 ## Title Convention
@@ -77,6 +105,7 @@ Before submitting, verify:
 - [ ] **Description** clearly states what the feature is
 - [ ] **Use Case** explains why it's needed with a concrete scenario
 - [ ] **No duplicates** — search existing issues first: `gh search issues "<keywords>" --repo openabdev/openab --label feature`
+- [ ] **Related issues reviewed** — searched for related issues and considered whether the FR scope should be adjusted
 - [ ] **Scope label** is included alongside `feature`
 - [ ] **References** — link related issues with `#number` if applicable
 
@@ -86,10 +115,12 @@ When an AI agent is asked to submit a feature request referencing this doc:
 
 1. **Synthesize** — Distill the conversation into the required sections. Don't copy-paste raw chat; rewrite into clear, structured prose.
 2. **Infer scope** — Determine the correct scope from the discussion context.
-3. **Check duplicates** — Search for existing issues before creating.
-4. **Draft and confirm** — Show the user the formatted issue (title + body) and ask for confirmation before submitting.
-5. **Submit** — Use `gh issue create` with the correct labels and format.
-6. **Report** — Share the issue URL after creation.
+3. **Search related issues** — Search existing issues for duplicates and related work. List them in the Related Issues section.
+4. **Refine scope** — Based on related issues found, consider whether the FR should be narrower, broader, or reframed to better fit the product. Suggest adjustments to the user.
+5. **Check prior art** — Look for similar features in OpenClaw, Hermes Agent, or other related projects.
+6. **Draft and confirm** — Show the user the formatted issue (title + body) and ask for confirmation before submitting.
+7. **Submit** — Use `gh issue create` with the correct labels and format.
+8. **Report** — Share the issue URL after creation.
 
 ## Example
 
@@ -115,4 +146,14 @@ everywhere, forcing admins to pick a compromise value.
 Add an optional `session_timeout` field to the per-channel config in
 `openab.yaml`. When set, it overrides the global `session.timeout`.
 Fall back to global if unset.
+
+### Prior Art
+
+OpenClaw supports per-channel configuration overrides via its
+`channel_config` map. See openclaw/openclaw#142.
+
+### Related Issues
+
+- #210 — global session timeout configuration (this extends it)
+- #185 — per-channel bot personality (similar per-channel override pattern)
 ```

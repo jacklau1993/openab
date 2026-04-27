@@ -44,7 +44,7 @@ OAB's position: the scheduler should be **external to the agent runtime**. For P
 - Covers the 80% use case: "send this message at this time"
 - Zero additional infrastructure for simple deployments
 - Operator has full visibility and control over what runs and when
-- Aligns with OAB's "不要複雜" (keep it simple) philosophy
+- Aligns with OAB's "keep it simple" philosophy
 
 ---
 

@@ -8,6 +8,7 @@ use crate::acp::{classify_notification, AcpEvent, ContentBlock, SessionPool};
 use crate::config::ReactionsConfig;
 use crate::error_display::{format_coded_error, format_user_error};
 use crate::format;
+use crate::markdown::{self, TableMode};
 use crate::reactions::StatusReactionController;
 
 // --- Platform-agnostic types ---
@@ -113,13 +114,15 @@ pub trait ChatAdapter: Send + Sync + 'static {
 pub struct AdapterRouter {
     pool: Arc<SessionPool>,
     reactions_config: ReactionsConfig,
+    table_mode: TableMode,
 }
 
 impl AdapterRouter {
-    pub fn new(pool: Arc<SessionPool>, reactions_config: ReactionsConfig) -> Self {
+    pub fn new(pool: Arc<SessionPool>, reactions_config: ReactionsConfig, table_mode: TableMode) -> Self {
         Self {
             pool,
             reactions_config,
+            table_mode,
         }
     }
 
@@ -245,6 +248,7 @@ impl AdapterRouter {
         let thread_channel = thread_channel.clone();
         let message_limit = adapter.message_limit();
         let streaming = adapter.use_streaming(other_bot_present);
+        let table_mode = self.table_mode;
 
         self.pool
             .with_connection(thread_key, |conn| {
@@ -396,6 +400,7 @@ impl AdapterRouter {
                         final_content
                     };
 
+                    let final_content = markdown::convert_tables(&final_content, table_mode);
                     let chunks = format::split_message(&final_content, message_limit);
                     if let Some(msg) = placeholder_msg {
                         // Streaming: edit first chunk into placeholder, send rest as new messages

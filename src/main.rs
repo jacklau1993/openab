@@ -5,6 +5,7 @@ mod config;
 mod discord;
 mod error_display;
 mod format;
+mod markdown;
 mod media;
 mod reactions;
 mod setup;
@@ -134,7 +135,7 @@ async fn main() -> anyhow::Result<()> {
         info!(model = %cfg.stt.model, base_url = %cfg.stt.base_url, "STT enabled");
     }
 
-    let router = Arc::new(AdapterRouter::new(pool.clone(), cfg.reactions));
+    let router = Arc::new(AdapterRouter::new(pool.clone(), cfg.reactions, cfg.markdown.tables));
 
     // Shutdown signal for Slack adapter
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);

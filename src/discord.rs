@@ -102,6 +102,41 @@ impl ChatAdapter for DiscordAdapter {
         })
     }
 
+    async fn recover_thread_from_message(
+        &self,
+        channel: &ChannelRef,
+        trigger_msg: &MessageRef,
+        _err: anyhow::Error,
+    ) -> anyhow::Result<ChannelRef> {
+        // Another bot won the race from the same trigger message. Discord
+        // only allows one thread per message, so refetch the message and
+        // join the thread our sibling just created.
+        let ch_id: u64 = channel.channel_id.parse()?;
+        let msg_id: u64 = trigger_msg.message_id.parse()?;
+        let refreshed = ChannelId::new(ch_id)
+            .message(&self.http, MessageId::new(msg_id))
+            .await
+            .map_err(|fe| anyhow::anyhow!(
+                "thread_already_exists (race), but refetch failed: {fe}"
+            ))?;
+        let existing = refreshed.thread.ok_or_else(|| {
+            anyhow::anyhow!(
+                "thread_already_exists (race), but message has no thread after refetch"
+            )
+        })?;
+        tracing::info!(
+            channel_id = %channel.channel_id,
+            thread_id = %existing.id,
+            "joining thread created by sibling bot from same trigger message"
+        );
+        Ok(ChannelRef {
+            platform: "discord".into(),
+            channel_id: existing.id.to_string(),
+            thread_id: None,
+            parent_id: Some(channel.channel_id.clone()),
+        })
+    }
+
     async fn add_reaction(&self, msg: &MessageRef, emoji: &str) -> anyhow::Result<()> {
         let ch_id: u64 = Self::resolve_channel(&msg.channel).parse()?;
         let msg_id: u64 = msg.message_id.parse()?;
@@ -849,50 +884,7 @@ async fn get_or_create_thread(
         parent_id: None,
     };
     let trigger_ref = discord_msg_ref(msg);
-    match adapter.create_thread(&parent, &trigger_ref, &thread_name).await {
-        Ok(ch) => Ok(ch),
-        Err(e) if is_thread_already_exists_error(&e) => {
-            // Another bot won the race from the same trigger message. Discord
-            // only allows one thread per message, so refetch the message and
-            // join the thread our sibling just created.
-            let refreshed = msg
-                .channel_id
-                .message(&ctx.http, msg.id)
-                .await
-                .map_err(|fe| anyhow::anyhow!(
-                    "thread_already_exists (race), but refetch failed: {fe}"
-                ))?;
-            let existing = refreshed.thread.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "thread_already_exists (race), but message has no thread after refetch"
-                )
-            })?;
-            tracing::info!(
-                channel_id = %msg.channel_id,
-                thread_id = %existing.id,
-                "joining thread created by sibling bot from same trigger message"
-            );
-            Ok(ChannelRef {
-                platform: "discord".into(),
-                channel_id: existing.id.to_string(),
-                thread_id: None,
-                parent_id: Some(msg.channel_id.get().to_string()),
-            })
-        }
-        Err(e) => Err(e),
-    }
-}
-
-/// Detect Discord's "A thread has already been created for this message" error
-/// (JSON error code 160004). Triggered when two bots responding to the same
-/// @-mention race to create a thread from the same trigger message.
-///
-/// Uses string matching because serenity surfaces Discord API errors as
-/// formatted strings — there is no structured error code we can match on.
-/// Unit tests pin the expected patterns so serenity formatting changes are caught.
-fn is_thread_already_exists_error(err: &anyhow::Error) -> bool {
-    let msg = err.to_string();
-    msg.contains("160004") || msg.contains("already been created")
+    crate::adapter::ensure_thread(adapter, &parent, &trigger_ref, &thread_name).await
 }
 
 static ROLE_MENTION_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
@@ -1015,6 +1007,7 @@ fn should_process_user_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::adapter::is_thread_already_exists_error;
     use crate::bot_turns::{HARD_BOT_TURN_LIMIT, TurnResult};
 
     // --- resolve_mentions tests ---

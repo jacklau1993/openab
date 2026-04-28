@@ -97,6 +97,23 @@ pub trait ChatAdapter: Send + Sync + 'static {
         Err(anyhow::anyhow!("edit_message not supported"))
     }
 
+    /// Recover from a "thread already exists" race condition.
+    ///
+    /// Called by [`ensure_thread`] when `create_thread` fails with a
+    /// thread-already-exists error (e.g. Discord error code 160004).
+    /// The adapter should refetch the trigger message and return the
+    /// existing thread's `ChannelRef`.
+    ///
+    /// Default: returns the original error (no recovery).
+    async fn recover_thread_from_message(
+        &self,
+        _channel: &ChannelRef,
+        _trigger_msg: &MessageRef,
+        _err: anyhow::Error,
+    ) -> Result<ChannelRef> {
+        Err(anyhow::anyhow!("recover_thread_from_message not supported"))
+    }
+
     /// Whether this adapter should use streaming edit (true) or send-once (false).
     /// `other_bot_present` indicates if another bot has posted in the current thread.
     /// Streaming should be disabled in multi-bot threads to avoid edit interference.
@@ -105,6 +122,39 @@ pub trait ChatAdapter: Send + Sync + 'static {
     /// not be detected until the next message. This is acceptable: the first
     /// response may stream, but subsequent ones will correctly use send-once.
     fn use_streaming(&self, other_bot_present: bool) -> bool;
+}
+
+// --- Shared thread helpers ---
+
+/// Detect "thread already exists" errors (Discord error code 160004).
+///
+/// Triggered when two bots race to create a thread from the same trigger
+/// message. Uses string matching because serenity surfaces Discord API
+/// errors as formatted strings.
+pub fn is_thread_already_exists_error(err: &anyhow::Error) -> bool {
+    let msg = err.to_string();
+    msg.contains("160004") || msg.contains("already been created")
+}
+
+/// Create a thread from a trigger message, handling race conditions.
+///
+/// Calls `adapter.create_thread()`. If the thread already exists (race with
+/// another bot), delegates to `adapter.recover_thread_from_message()` for
+/// platform-specific recovery (e.g. Discord refetches the message to find
+/// the existing thread).
+pub async fn ensure_thread(
+    adapter: &Arc<dyn ChatAdapter>,
+    channel: &ChannelRef,
+    trigger_msg: &MessageRef,
+    title: &str,
+) -> Result<ChannelRef> {
+    match adapter.create_thread(channel, trigger_msg, title).await {
+        Ok(ch) => Ok(ch),
+        Err(e) if is_thread_already_exists_error(&e) => {
+            adapter.recover_thread_from_message(channel, trigger_msg, e).await
+        }
+        Err(e) => Err(e),
+    }
 }
 
 // --- AdapterRouter ---

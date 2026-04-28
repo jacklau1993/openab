@@ -7,7 +7,7 @@ use crate::format;
 use crate::media;
 use async_trait::async_trait;
 use std::sync::LazyLock;
-use serenity::builder::{CreateActionRow, CreateCommand, CreateInteractionResponse, CreateInteractionResponseMessage, CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption, CreateThread, EditMessage};
+use serenity::builder::{CreateActionRow, CreateCommand, CreateInteractionResponse, CreateInteractionResponseMessage, CreateSelectMenu, CreateSelectMenuKind, CreateSelectMenuOption, CreateThread, EditMessage, EditThread};
 use serenity::http::Http;
 use serenity::model::application::{ComponentInteractionDataKind, Interaction};
 use serenity::model::channel::{AutoArchiveDuration, Message, MessageType, ReactionType};
@@ -77,6 +77,24 @@ impl ChatAdapter for DiscordAdapter {
 
     fn use_streaming(&self, other_bot_present: bool) -> bool {
         !other_bot_present
+    }
+
+    async fn rename_thread(&self, channel: &ChannelRef, new_title: &str) -> anyhow::Result<()> {
+        let ch_id: u64 = Self::resolve_channel(channel).parse()?;
+        ChannelId::new(ch_id)
+            .edit_thread(&self.http, EditThread::new().name(new_title))
+            .await?;
+        Ok(())
+    }
+
+    async fn get_thread_title(&self, channel: &ChannelRef) -> anyhow::Result<Option<String>> {
+        let ch_id: u64 = Self::resolve_channel(channel).parse()?;
+        let channel = ChannelId::new(ch_id).to_channel(&self.http).await?;
+        if let serenity::model::channel::Channel::Guild(gc) = channel {
+            Ok(Some(gc.name.clone()))
+        } else {
+            Ok(None)
+        }
     }
 
     async fn create_thread(

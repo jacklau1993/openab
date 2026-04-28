@@ -103,6 +103,18 @@ data:
     [reactions]
     enabled = {{ ($cfg.reactions).enabled | default true }}
     remove_after_reply = {{ ($cfg.reactions).removeAfterReply | default false }}
+
+    [thread_status]
+    enabled = {{ ($cfg.threadStatus).enabled | default false }}
+    {{- with ($cfg.threadStatus).running }}
+    running = {{ . | toJson }}
+    {{- end }}
+    {{- with ($cfg.threadStatus).done }}
+    done = {{ . | toJson }}
+    {{- end }}
+    {{- with ($cfg.threadStatus).error }}
+    error = {{ . | toJson }}
+    {{- end }}
     {{- if ($cfg.stt).enabled }}
     {{- if not ($cfg.stt).apiKey }}
     {{ fail (printf "agents.%s.stt.apiKey is required when stt.enabled=true" $name) }}

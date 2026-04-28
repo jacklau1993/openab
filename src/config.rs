@@ -43,6 +43,8 @@ pub struct Config {
     #[serde(default)]
     pub reactions: ReactionsConfig,
     #[serde(default)]
+    pub thread_status: ThreadStatusConfig,
+    #[serde(default)]
     pub stt: SttConfig,
     #[serde(default)]
     pub markdown: MarkdownConfig,
@@ -326,6 +328,35 @@ impl Default for ReactionTiming {
             debounce_ms: default_debounce_ms(), stall_soft_ms: default_stall_soft_ms(),
             stall_hard_ms: default_stall_hard_ms(), done_hold_ms: default_done_hold_ms(),
             error_hold_ms: default_error_hold_ms(),
+        }
+    }
+}
+
+// --- thread status ---
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ThreadStatusConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_status_running")]
+    pub running: String,
+    #[serde(default = "default_status_done")]
+    pub done: String,
+    #[serde(default = "default_status_error")]
+    pub error: String,
+}
+
+fn default_status_running() -> String { "⏳".into() }
+fn default_status_done() -> String { "✅".into() }
+fn default_status_error() -> String { "❌".into() }
+
+impl Default for ThreadStatusConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            running: default_status_running(),
+            done: default_status_done(),
+            error: default_status_error(),
         }
     }
 }

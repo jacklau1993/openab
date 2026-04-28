@@ -136,7 +136,7 @@ async fn main() -> anyhow::Result<()> {
         info!(model = %cfg.stt.model, base_url = %cfg.stt.base_url, "STT enabled");
     }
 
-    let router = Arc::new(AdapterRouter::new(pool.clone(), cfg.reactions, cfg.markdown.tables));
+    let router = Arc::new(AdapterRouter::new(pool.clone(), cfg.reactions, cfg.thread_status, cfg.markdown.tables));
 
     // Shutdown signal for Slack adapter
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);

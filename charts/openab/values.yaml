@@ -164,6 +164,11 @@ agents:
     reactions:
       enabled: true
       removeAfterReply: false
+    threadStatus:
+      enabled: false
+      # running: "⏳"
+      # done: "✅"
+      # error: "❌"
     stt:
       enabled: false
       apiKey: ""

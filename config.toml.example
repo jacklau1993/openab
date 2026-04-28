@@ -105,6 +105,14 @@ stall_hard_ms = 30000
 done_hold_ms = 1500
 error_hold_ms = 2500
 
+# --- Thread title status indicator ---
+# Prepend emoji to thread titles to show processing status at a glance.
+[thread_status]
+enabled = false
+# running = "⏳"
+# done = "✅"
+# error = "❌"
+
 # --- Scheduled messages (config-driven cron) ---
 # Each entry sends a message to the agent at the specified schedule.
 # The agent processes it and replies to the target channel.

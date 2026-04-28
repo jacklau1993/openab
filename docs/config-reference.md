@@ -172,6 +172,28 @@ Fine-tune reaction timing behavior (milliseconds).
 
 ---
 
+## `[thread_status]`
+
+Status indicator emoji prefix on thread titles. Shows at a glance whether a task is running, completed, or failed in the Discord sidebar.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `enabled` | bool | `false` | Enable/disable thread title status emoji. |
+| `running` | string | `⏳` | Emoji prefix while the agent is processing. |
+| `done` | string | `✅` | Emoji prefix when the agent finishes successfully. |
+| `error` | string | `❌` | Emoji prefix when the agent encounters an error. |
+
+**Example:**
+
+```toml
+[thread_status]
+enabled = true
+```
+
+**Note:** Each status update requires a Discord API call to rename the thread (2 calls per message: running → done/error). Subject to Discord rate limits.
+
+---
+
 ## `[stt]`
 
 Speech-to-text transcription for voice messages. Uses an OpenAI-compatible `/audio/transcriptions` endpoint.
@@ -275,6 +297,10 @@ Key mapping (`values.yaml` → `config.toml`):
 | `agents.<name>.pool.maxSessions` | `[pool] max_sessions` |
 | `agents.<name>.pool.sessionTtlHours` | `[pool] session_ttl_hours` |
 | `agents.<name>.reactions.enabled` | `[reactions] enabled` |
+| `agents.<name>.threadStatus.enabled` | `[thread_status] enabled` |
+| `agents.<name>.threadStatus.running` | `[thread_status] running` |
+| `agents.<name>.threadStatus.done` | `[thread_status] done` |
+| `agents.<name>.threadStatus.error` | `[thread_status] error` |
 | `agents.<name>.stt.apiKey` | `[stt] api_key` |
 | `agents.<name>.cronjobs[].enabled` | `[[cronjobs]] enabled` |
 | `agents.<name>.cronjobs[].schedule` | `[[cronjobs]] schedule` |

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use tracing::error;
 
 use crate::acp::{classify_notification, AcpEvent, ContentBlock, SessionPool};
-use crate::config::ReactionsConfig;
+use crate::config::{ReactionsConfig, ThreadStatusConfig};
 use crate::error_display::{format_coded_error, format_user_error};
 use crate::format;
 use crate::markdown::{self, TableMode};
@@ -122,6 +122,16 @@ pub trait ChatAdapter: Send + Sync + 'static {
         Err(anyhow::anyhow!("edit_message not supported"))
     }
 
+    /// Rename a thread (update its title). Default: no-op (not all platforms support it).
+    async fn rename_thread(&self, _channel: &ChannelRef, _new_title: &str) -> Result<()> {
+        Ok(())
+    }
+
+    /// Get the current thread title. Default: returns None (not all platforms support it).
+    async fn get_thread_title(&self, _channel: &ChannelRef) -> Result<Option<String>> {
+        Ok(None)
+    }
+
     /// Whether this adapter should use streaming edit (true) or send-once (false).
     /// `other_bot_present` indicates if another bot has posted in the current thread.
     /// Streaming should be disabled in multi-bot threads to avoid edit interference.
@@ -139,14 +149,16 @@ pub trait ChatAdapter: Send + Sync + 'static {
 pub struct AdapterRouter {
     pool: Arc<SessionPool>,
     reactions_config: ReactionsConfig,
+    thread_status: ThreadStatusConfig,
     table_mode: TableMode,
 }
 
 impl AdapterRouter {
-    pub fn new(pool: Arc<SessionPool>, reactions_config: ReactionsConfig, table_mode: TableMode) -> Self {
+    pub fn new(pool: Arc<SessionPool>, reactions_config: ReactionsConfig, thread_status: ThreadStatusConfig, table_mode: TableMode) -> Self {
         Self {
             pool,
             reactions_config,
+            thread_status,
             table_mode,
         }
     }
@@ -222,6 +234,23 @@ impl AdapterRouter {
         ));
         reactions.set_queued().await;
 
+        // Thread status emoji: prepend ⏳ to thread title while processing
+        let original_title = if self.thread_status.enabled {
+            match adapter.get_thread_title(thread_channel).await {
+                Ok(Some(title)) => {
+                    let bare = strip_status_prefix(&title, &self.thread_status);
+                    let running_title = format!("{} {bare}", self.thread_status.running);
+                    if let Err(e) = adapter.rename_thread(thread_channel, &running_title).await {
+                        tracing::warn!(error = %e, "failed to set thread running status");
+                    }
+                    Some(bare)
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+
         let result = self
             .stream_prompt(
                 adapter,
@@ -236,6 +265,15 @@ impl AdapterRouter {
         match &result {
             Ok(()) => reactions.set_done().await,
             Err(_) => reactions.set_error().await,
+        }
+
+        // Thread status emoji: update to ✅ or ❌
+        if let Some(ref bare) = original_title {
+            let emoji = if result.is_ok() { &self.thread_status.done } else { &self.thread_status.error };
+            let final_title = format!("{emoji} {bare}");
+            if let Err(e) = adapter.rename_thread(thread_channel, &final_title).await {
+                tracing::warn!(error = %e, "failed to set thread final status");
+            }
         }
 
         let hold_ms = if result.is_ok() {
@@ -449,6 +487,19 @@ impl AdapterRouter {
     }
 }
 
+/// Strip any known status emoji prefix from a thread title.
+fn strip_status_prefix(title: &str, config: &ThreadStatusConfig) -> String {
+    let prefixes = [&config.running, &config.done, &config.error];
+    let mut s = title.to_string();
+    for prefix in &prefixes {
+        if let Some(rest) = s.strip_prefix(prefix.as_str()) {
+            s = rest.trim_start().to_string();
+            break;
+        }
+    }
+    s
+}
+
 /// Flatten a tool-call title into a single line safe for inline-code spans.
 fn sanitize_title(title: &str) -> String {
     title.replace('\r', "").replace('\n', " ; ").replace('`', "'")
@@ -626,5 +677,51 @@ mod tests {
             ..ch.clone()
         };
         assert_eq!(thread_ch.origin_event_id.as_deref(), Some("evt_abc"));
+    }
+
+    #[test]
+    fn strip_status_prefix_removes_running() {
+        let cfg = ThreadStatusConfig::default();
+        assert_eq!(strip_status_prefix("⏳ my thread", &cfg), "my thread");
+    }
+
+    #[test]
+    fn strip_status_prefix_removes_done() {
+        let cfg = ThreadStatusConfig::default();
+        assert_eq!(strip_status_prefix("✅ my thread", &cfg), "my thread");
+    }
+
+    #[test]
+    fn strip_status_prefix_removes_error() {
+        let cfg = ThreadStatusConfig::default();
+        assert_eq!(strip_status_prefix("❌ my thread", &cfg), "my thread");
+    }
+
+    #[test]
+    fn strip_status_prefix_no_prefix() {
+        let cfg = ThreadStatusConfig::default();
+        assert_eq!(strip_status_prefix("my thread", &cfg), "my thread");
+    }
+
+    #[test]
+    fn strip_status_prefix_custom_emojis() {
+        let cfg = ThreadStatusConfig {
+            enabled: true,
+            running: "🔄".into(),
+            done: "🎉".into(),
+            error: "💥".into(),
+        };
+        assert_eq!(strip_status_prefix("🔄 working", &cfg), "working");
+        assert_eq!(strip_status_prefix("🎉 done task", &cfg), "done task");
+        assert_eq!(strip_status_prefix("💥 failed", &cfg), "failed");
+    }
+
+    #[test]
+    fn thread_status_config_defaults() {
+        let cfg = ThreadStatusConfig::default();
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.running, "⏳");
+        assert_eq!(cfg.done, "✅");
+        assert_eq!(cfg.error, "❌");
     }
 }

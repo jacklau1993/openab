@@ -22,7 +22,7 @@ use crate::reactions::StatusReactionController;
 /// Compare with `SenderContext`, which is **metadata for the agent**: there
 /// `channel_id` is the parent channel and `thread_id` is the thread,
 /// matching Slack's model for cross-platform consistency.
-#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct ChannelRef {
     pub platform: String,
     pub channel_id: String,
@@ -31,6 +31,31 @@ pub struct ChannelRef {
     pub thread_id: Option<String>,
     /// Parent channel if this is a thread-as-channel (Discord).
     pub parent_id: Option<String>,
+    /// Originating gateway event ID, propagated back in `GatewayReply.reply_to`
+    /// so the gateway can correlate replies with inbound events (e.g. LINE reply tokens).
+    /// Excluded from Hash/Eq — two ChannelRefs pointing to the same channel are
+    /// equal regardless of which event they originated from.
+    pub origin_event_id: Option<String>,
+}
+
+impl PartialEq for ChannelRef {
+    fn eq(&self, other: &Self) -> bool {
+        self.platform == other.platform
+            && self.channel_id == other.channel_id
+            && self.thread_id == other.thread_id
+            && self.parent_id == other.parent_id
+    }
+}
+
+impl Eq for ChannelRef {}
+
+impl std::hash::Hash for ChannelRef {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.platform.hash(state);
+        self.channel_id.hash(state);
+        self.thread_id.hash(state);
+        self.parent_id.hash(state);
+    }
 }
 
 /// Identifies a message across platforms.
@@ -539,5 +564,67 @@ mod tests {
         let adapter = TestAdapter;
         // Verify the method is callable and returns the declared value
         assert!(!adapter.use_streaming(false));
+    }
+
+    #[test]
+    fn origin_event_id_excluded_from_eq() {
+        let a = ChannelRef {
+            platform: "line".into(),
+            channel_id: "U123".into(),
+            thread_id: None,
+            parent_id: None,
+            origin_event_id: Some("evt_aaa".into()),
+        };
+        let b = ChannelRef {
+            platform: "line".into(),
+            channel_id: "U123".into(),
+            thread_id: None,
+            parent_id: None,
+            origin_event_id: Some("evt_bbb".into()),
+        };
+        assert_eq!(a, b, "same channel with different event IDs must be equal");
+    }
+
+    #[test]
+    fn origin_event_id_excluded_from_hash() {
+        use std::collections::HashMap;
+        let a = ChannelRef {
+            platform: "line".into(),
+            channel_id: "U123".into(),
+            thread_id: None,
+            parent_id: None,
+            origin_event_id: Some("evt_aaa".into()),
+        };
+        let b = ChannelRef {
+            platform: "line".into(),
+            channel_id: "U123".into(),
+            thread_id: None,
+            parent_id: None,
+            origin_event_id: Some("evt_bbb".into()),
+        };
+        let mut map = HashMap::new();
+        map.insert(a, "first");
+        // b should hit the same bucket and overwrite
+        map.insert(b, "second");
+        assert_eq!(map.len(), 1);
+        assert_eq!(map.values().next(), Some(&"second"));
+    }
+
+    #[test]
+    fn origin_event_id_survives_clone() {
+        let ch = ChannelRef {
+            platform: "line".into(),
+            channel_id: "U123".into(),
+            thread_id: None,
+            parent_id: None,
+            origin_event_id: Some("evt_abc".into()),
+        };
+        // Simulates create_thread propagation: clone preserves origin_event_id
+        let thread_ch = ChannelRef {
+            thread_id: Some("topic_1".into()),
+            origin_event_id: ch.origin_event_id.clone(),
+            ..ch.clone()
+        };
+        assert_eq!(thread_ch.origin_event_id.as_deref(), Some("evt_abc"));
     }
 }

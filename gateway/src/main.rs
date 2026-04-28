@@ -593,25 +593,31 @@ async fn handle_oab_connection(state: Arc<AppState>, socket: axum::extract::ws::
                                         Ok(r) if r.status().is_success() => {
                                             used_reply = true;
                                         }
-                                        Ok(r) if r.status().is_client_error() => {
-                                            // 4xx = token invalid/expired, safe to fallback
-                                            let status = r.status();
-                                            let body = r.text().await.unwrap_or_default();
-                                            warn!(status = %status, body = %body, "LINE Reply API client error, falling back to Push");
-                                        }
                                         Ok(r) => {
-                                            // 5xx / other = message may have been delivered,
-                                            // do NOT fallback to Push to avoid duplicate delivery
                                             let status = r.status();
                                             let body = r.text().await.unwrap_or_default();
-                                            error!(status = %status, body = %body, "LINE Reply API server error, NOT falling back to Push (possible duplicate risk)");
-                                            used_reply = true; // prevent Push fallback
+                                            // Only fallback to Push when LINE explicitly says
+                                            // the reply token is unusable (invalid/expired).
+                                            // LINE returns "Invalid reply token" or "expired"
+                                            // in the error body for token-specific failures.
+                                            let body_lower = body.to_lowercase();
+                                            let token_unusable = status.as_u16() == 400
+                                                && (body_lower.contains("invalid")
+                                                    && body_lower.contains("reply token")
+                                                    || body_lower.contains("expired"));
+                                            if token_unusable {
+                                                warn!(status = %status, body = %body, "LINE reply token unusable, falling back to Push");
+                                            } else {
+                                                // Ambiguous: 5xx, other 4xx, or unrecognized 400.
+                                                // Message may have been delivered — do NOT fallback.
+                                                error!(status = %status, body = %body, "LINE Reply API error, NOT falling back to Push (possible duplicate risk)");
+                                                used_reply = true;
+                                            }
                                         }
                                         Err(e) => {
-                                            // Network error = request may or may not have reached LINE,
-                                            // do NOT fallback to avoid duplicate delivery
+                                            // Network/timeout error: delivery ambiguous, do NOT fallback
                                             error!(err = %e, "LINE Reply API network error, NOT falling back to Push (possible duplicate risk)");
-                                            used_reply = true; // prevent Push fallback
+                                            used_reply = true;
                                         }
                                     }
                                 }

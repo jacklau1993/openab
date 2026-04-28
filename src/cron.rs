@@ -229,6 +229,7 @@ async fn fire_cronjob(
         channel_id: job.channel.clone(),
         thread_id: job.thread_id.clone(),
         parent_id: None,
+        origin_event_id: None,
     };
 
     // Send visible message first so users see what triggered

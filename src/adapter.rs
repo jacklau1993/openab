@@ -31,6 +31,9 @@ pub struct ChannelRef {
     pub thread_id: Option<String>,
     /// Parent channel if this is a thread-as-channel (Discord).
     pub parent_id: Option<String>,
+    /// Originating gateway event ID, propagated back in `GatewayReply.reply_to`
+    /// so the gateway can correlate replies with inbound events (e.g. LINE reply tokens).
+    pub origin_event_id: Option<String>,
 }
 
 /// Identifies a message across platforms.

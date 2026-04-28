@@ -350,6 +350,7 @@ impl ChatAdapter for SlackAdapter {
                 channel_id: channel.channel_id.clone(),
                 thread_id: channel.thread_id.clone(),
                 parent_id: None,
+                origin_event_id: None,
             },
             message_id: ts.to_string(),
         })
@@ -368,6 +369,7 @@ impl ChatAdapter for SlackAdapter {
             channel_id: channel.channel_id.clone(),
             thread_id: Some(trigger_msg.message_id.clone()),
             parent_id: None,
+            origin_event_id: None,
         })
     }
 
@@ -692,6 +694,7 @@ pub async fn run_slack_adapter(
                                                                         channel_id: channel_id.to_string(),
                                                                         thread_id: event["thread_ts"].as_str().map(|s| s.to_string()),
                                                                         parent_id: None,
+                                                                        origin_event_id: None,
                                                                     };
                                                                     let _ = adapter.send_message(&warn_channel, &user_message).await;
                                                                 }
@@ -956,6 +959,7 @@ async fn handle_message(
                 channel_id: channel_id.clone(),
                 thread_id: thread_ts.clone(),
                 parent_id: None,
+                origin_event_id: None,
             },
             message_id: ts.clone(),
         };
@@ -1021,6 +1025,7 @@ async fn handle_message(
                             channel_id: channel_id.clone(),
                             thread_id: thread_ts.clone(),
                             parent_id: None,
+                            origin_event_id: None,
                         },
                         message_id: ts.clone(),
                     };
@@ -1096,6 +1101,7 @@ async fn handle_message(
             channel_id: channel_id.clone(),
             thread_id: thread_ts.clone(),
             parent_id: None,
+            origin_event_id: None,
         },
         message_id: ts.clone(),
     };
@@ -1106,6 +1112,7 @@ async fn handle_message(
         channel_id: channel_id.clone(),
         thread_id: Some(thread_ts.unwrap_or(ts)),
         parent_id: None,
+        origin_event_id: None,
     };
 
     // Serialize sender context with Slack-native key names so agents calling

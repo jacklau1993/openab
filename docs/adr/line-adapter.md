@@ -101,7 +101,7 @@ LINE is not ideal when:
    - Group   → line:{groupId}
    - Room    → line:{roomId}
 6. Message is routed to AdapterRouter → ACP Session Pool → kiro-cli process
-7. Agent response is sent back via LINE Push Message API
+7. Agent response is sent back via LINE Reply API (free) or Push Message API (fallback)
 ```
 
 ### Reply Strategy: Hybrid Reply/Push Messages

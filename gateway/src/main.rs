@@ -593,13 +593,25 @@ async fn handle_oab_connection(state: Arc<AppState>, socket: axum::extract::ws::
                                         Ok(r) if r.status().is_success() => {
                                             used_reply = true;
                                         }
-                                        Ok(r) => {
+                                        Ok(r) if r.status().is_client_error() => {
+                                            // 4xx = token invalid/expired, safe to fallback
                                             let status = r.status();
                                             let body = r.text().await.unwrap_or_default();
-                                            warn!(status = %status, body = %body, "LINE Reply API failed, falling back to Push");
+                                            warn!(status = %status, body = %body, "LINE Reply API client error, falling back to Push");
+                                        }
+                                        Ok(r) => {
+                                            // 5xx / other = message may have been delivered,
+                                            // do NOT fallback to Push to avoid duplicate delivery
+                                            let status = r.status();
+                                            let body = r.text().await.unwrap_or_default();
+                                            error!(status = %status, body = %body, "LINE Reply API server error, NOT falling back to Push (possible duplicate risk)");
+                                            used_reply = true; // prevent Push fallback
                                         }
                                         Err(e) => {
-                                            warn!(err = %e, "LINE Reply API error, falling back to Push");
+                                            // Network error = request may or may not have reached LINE,
+                                            // do NOT fallback to avoid duplicate delivery
+                                            error!(err = %e, "LINE Reply API network error, NOT falling back to Push (possible duplicate risk)");
+                                            used_reply = true; // prevent Push fallback
                                         }
                                     }
                                 }

@@ -142,7 +142,10 @@ struct AppState {
     line_access_token: Option<String>,
     /// Broadcast channel: gateway → OAB (events)
     event_tx: broadcast::Sender<String>,
-    /// Cache: event_id → (LINE replyToken, timestamp)
+    /// Cache: event_id → (LINE replyToken, timestamp).
+    /// Global across all OAB WebSocket clients. LINE reply tokens are single-use:
+    /// the first client to `remove()` a token wins the free Reply API call;
+    /// other clients for the same event naturally fall back to Push API.
     reply_token_cache: ReplyTokenCache,
 }
 

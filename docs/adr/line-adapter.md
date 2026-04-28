@@ -384,7 +384,7 @@ For v1:
 - LINE users can interact with OpenAB agents without switching to Discord or Slack
 - The inbound webhook pattern opens the door for future webhook-based platforms (Telegram, WhatsApp, etc.)
 - Using `axum` for the HTTP server provides a solid foundation for a general-purpose webhook gateway
-- Push message strategy avoids the 1-minute reply token limitation, enabling long-running agent tasks
+- Hybrid reply/push strategy optimizes cost: the gateway opportunistically uses the free Reply API when the agent responds within the token TTL, falling back to Push API for longer-running tasks
 
 ### Negative
 

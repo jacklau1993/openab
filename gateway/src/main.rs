@@ -410,22 +410,11 @@ async fn handle_oab_connection(state: Arc<AppState>, socket: axum::extract::ws::
 
     info!("OAB client connected via WebSocket");
 
-    let last_event_id: Arc<Mutex<std::collections::HashMap<String, String>>> = Arc::new(Mutex::new(std::collections::HashMap::new()));
-
     // Forward gateway events → OAB
-    let last_event_id_for_send = last_event_id.clone();
     let send_task = tokio::spawn(async move {
         loop {
             tokio::select! {
                 Ok(event_json) = event_rx.recv() => {
-                    // Track the last event ID sent to this client
-                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&event_json) {
-                        if let (Some(eid), Some(cid)) = (v["event_id"].as_str(), v["channel"]["id"].as_str()) {
-                            let mut last = last_event_id_for_send.lock().await;
-                            last.insert(cid.to_string(), eid.to_string());
-                        }
-                    }
-
                     if ws_tx.send(Message::Text(event_json.into())).await.is_err() {
                         break;
                     }
@@ -442,21 +431,12 @@ async fn handle_oab_connection(state: Arc<AppState>, socket: axum::extract::ws::
     // Track per-message reaction state (Telegram replaces all reactions atomically)
     let reaction_state: Arc<Mutex<std::collections::HashMap<String, Vec<String>>>> =
         Arc::new(Mutex::new(std::collections::HashMap::new()));
-    let last_event_id_for_recv = last_event_id.clone();
     let recv_task = tokio::spawn(async move {
         let client = reqwest::Client::new();
         while let Some(Ok(msg)) = ws_rx.next().await {
             if let Message::Text(text) = msg {
                 match serde_json::from_str::<GatewayReply>(&text) {
-                    Ok(mut reply) => {
-                        // Auto-fill reply_to if empty using the last event sent to this client
-                        if reply.reply_to.is_empty() {
-                            let last = last_event_id_for_recv.lock().await;
-                            if let Some(eid) = last.get(&reply.channel.id) {
-                                reply.reply_to = eid.clone();
-                            }
-                        }
-
+                    Ok(reply) => {
                         // Handle create_topic command
                         if reply.command.as_deref() == Some("create_topic") {
                             let req_id = reply.request_id.clone().unwrap_or_default();
@@ -575,39 +555,48 @@ async fn handle_oab_connection(state: Arc<AppState>, socket: axum::extract::ws::
                         // Normal send_message — route by platform
                         if reply.platform == "line" {
                             if let Some(ref access_token) = line_access_token {
+                                // Extract token from cache (drop lock before HTTP call)
+                                let cached_token = {
+                                    let mut cache = reply_cache.lock().await;
+                                    cache
+                                        .remove(&reply.reply_to)
+                                        .and_then(|(token, cached_at)| {
+                                            if cached_at.elapsed().as_secs() < REPLY_TOKEN_TTL_SECS
+                                            {
+                                                Some(token)
+                                            } else {
+                                                info!("LINE replyToken expired, using Push API");
+                                                None
+                                            }
+                                        })
+                                };
+
                                 // Try Reply API first (free, no quota consumed)
                                 let mut used_reply = false;
-                                {
-                                    let mut cache = reply_cache.lock().await;
-                                    let entry: Option<(String, Instant)> = cache.remove(&reply.reply_to);
-                                    if let Some((reply_token, cached_at)) = entry {
-                                        if cached_at.elapsed().as_secs() < REPLY_TOKEN_TTL_SECS {
-                                            info!(to = %reply.channel.id, "gateway → line (reply API)");
-                                            let resp = client
-                                                .post("https://api.line.me/v2/bot/message/reply")
-                                                .bearer_auth(access_token)
-                                                .json(&serde_json::json!({
-                                                    "replyToken": reply_token,
-                                                    "messages": [{"type": "text", "text": reply.content.text}]
-                                                }))
-                                                .send()
-                                                .await;
-                                            match resp {
-                                                Ok(r) if r.status().is_success() => {
-                                                    used_reply = true;
-                                                }
-                                                Ok(r) => {
-                                                    warn!(status = %r.status(), "LINE Reply API failed, falling back to Push");
-                                                }
-                                                Err(e) => {
-                                                    warn!(err = %e, "LINE Reply API error, falling back to Push");
-                                                }
-                                            }
-                                        } else {
-                                            info!("LINE replyToken expired, using Push API");
+                                if let Some(reply_token) = cached_token {
+                                    info!(to = %reply.channel.id, "gateway → line (reply API)");
+                                    let resp = client
+                                        .post("https://api.line.me/v2/bot/message/reply")
+                                        .bearer_auth(access_token)
+                                        .json(&serde_json::json!({
+                                            "replyToken": reply_token,
+                                            "messages": [{"type": "text", "text": reply.content.text}]
+                                        }))
+                                        .send()
+                                        .await;
+                                    match resp {
+                                        Ok(r) if r.status().is_success() => {
+                                            used_reply = true;
+                                        }
+                                        Ok(r) => {
+                                            warn!(status = %r.status(), "LINE Reply API failed, falling back to Push");
+                                        }
+                                        Err(e) => {
+                                            warn!(err = %e, "LINE Reply API error, falling back to Push");
                                         }
                                     }
                                 }
+
                                 // Fallback to Push API
                                 if !used_reply {
                                     info!(to = %reply.channel.id, "gateway → line (push API)");
@@ -705,10 +694,14 @@ async fn main() -> Result<()> {
                 tokio::time::sleep(std::time::Duration::from_secs(60)).await;
                 let mut cache = cache_state.reply_token_cache.lock().await;
                 let before = cache.len();
-                cache.retain(|_, (_, t)| t.elapsed().as_secs() < REPLY_TOKEN_TTL_SECS + 10);
+                cache.retain(|_, (_, t)| t.elapsed().as_secs() < REPLY_TOKEN_TTL_SECS);
                 let after = cache.len();
                 if before != after {
-                    info!(removed = before - after, remaining = after, "reply token cache sweep");
+                    info!(
+                        removed = before - after,
+                        remaining = after,
+                        "reply token cache sweep"
+                    );
                 }
             }
         });

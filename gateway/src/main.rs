@@ -775,7 +775,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::time::{Duration, Instant};
-    use wiremock::matchers::{method, path};
+    use wiremock::matchers::{body_json, header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn make_reply(event_id: &str) -> GatewayReply {
@@ -794,12 +794,18 @@ mod tests {
         Arc::new(std::sync::Mutex::new(HashMap::new()))
     }
 
-    /// Cache hit: uses Reply API, does NOT call Push API.
+    /// Cache hit: uses Reply API with correct replyToken, bearer token, and message body.
+    /// Does NOT call Push API.
     #[tokio::test]
     async fn cache_hit_uses_reply_api() {
         let server = MockServer::start().await;
         let _reply = Mock::given(method("POST"))
             .and(path("/v2/bot/message/reply"))
+            .and(header("authorization", "Bearer test_access_token"))
+            .and(body_json(serde_json::json!({
+                "replyToken": "tok_abc",
+                "messages": [{"type": "text", "text": "hello"}]
+            })))
             .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
             .expect(1)
             .mount_as_scoped(&server)
@@ -815,13 +821,12 @@ mod tests {
         cache.lock().unwrap().insert("evt_1".into(), ("tok_abc".into(), Instant::now()));
 
         let client = reqwest::Client::new();
-        let used = dispatch_line_reply(&client, "token", &cache, &make_reply("evt_1"), &server.uri()).await;
+        let used = dispatch_line_reply(&client, "test_access_token", &cache, &make_reply("evt_1"), &server.uri()).await;
 
         assert!(used, "should report Reply API was used");
-        // Scoped mocks auto-verify expect(N) on drop
     }
 
-    /// Cache miss: falls back to Push API.
+    /// Cache miss: falls back to Push API with correct "to", bearer token, and message body.
     #[tokio::test]
     async fn cache_miss_uses_push_api() {
         let server = MockServer::start().await;
@@ -833,6 +838,11 @@ mod tests {
             .await;
         let _push = Mock::given(method("POST"))
             .and(path("/v2/bot/message/push"))
+            .and(header("authorization", "Bearer test_access_token"))
+            .and(body_json(serde_json::json!({
+                "to": "U1234",
+                "messages": [{"type": "text", "text": "hello"}]
+            })))
             .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
             .expect(1)
             .mount_as_scoped(&server)
@@ -841,7 +851,7 @@ mod tests {
         let cache = make_cache();
 
         let client = reqwest::Client::new();
-        let used = dispatch_line_reply(&client, "token", &cache, &make_reply("evt_miss"), &server.uri()).await;
+        let used = dispatch_line_reply(&client, "test_access_token", &cache, &make_reply("evt_miss"), &server.uri()).await;
 
         assert!(!used, "should report Push API was used (no reply token)");
     }
@@ -858,6 +868,11 @@ mod tests {
             .await;
         let _push = Mock::given(method("POST"))
             .and(path("/v2/bot/message/push"))
+            .and(header("authorization", "Bearer test_access_token"))
+            .and(body_json(serde_json::json!({
+                "to": "U1234",
+                "messages": [{"type": "text", "text": "hello"}]
+            })))
             .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
             .expect(1)
             .mount_as_scoped(&server)
@@ -868,7 +883,7 @@ mod tests {
         cache.lock().unwrap().insert("evt_exp".into(), ("tok_old".into(), expired_time));
 
         let client = reqwest::Client::new();
-        let used = dispatch_line_reply(&client, "token", &cache, &make_reply("evt_exp"), &server.uri()).await;
+        let used = dispatch_line_reply(&client, "test_access_token", &cache, &make_reply("evt_exp"), &server.uri()).await;
 
         assert!(!used, "should report Push API was used (expired token)");
     }
@@ -879,6 +894,7 @@ mod tests {
         let server = MockServer::start().await;
         let _reply = Mock::given(method("POST"))
             .and(path("/v2/bot/message/reply"))
+            .and(header("authorization", "Bearer test_access_token"))
             .respond_with(
                 ResponseTemplate::new(400)
                     .set_body_string(r#"{"message":"Invalid reply token"}"#),
@@ -888,6 +904,11 @@ mod tests {
             .await;
         let _push = Mock::given(method("POST"))
             .and(path("/v2/bot/message/push"))
+            .and(header("authorization", "Bearer test_access_token"))
+            .and(body_json(serde_json::json!({
+                "to": "U1234",
+                "messages": [{"type": "text", "text": "hello"}]
+            })))
             .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
             .expect(1)
             .mount_as_scoped(&server)
@@ -897,7 +918,7 @@ mod tests {
         cache.lock().unwrap().insert("evt_400".into(), ("tok_bad".into(), Instant::now()));
 
         let client = reqwest::Client::new();
-        let used = dispatch_line_reply(&client, "token", &cache, &make_reply("evt_400"), &server.uri()).await;
+        let used = dispatch_line_reply(&client, "test_access_token", &cache, &make_reply("evt_400"), &server.uri()).await;
 
         assert!(!used, "should fall back to Push on 400 invalid token");
     }
@@ -908,6 +929,7 @@ mod tests {
         let server = MockServer::start().await;
         let _reply = Mock::given(method("POST"))
             .and(path("/v2/bot/message/reply"))
+            .and(header("authorization", "Bearer test_access_token"))
             .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
             .expect(1)
             .mount_as_scoped(&server)
@@ -923,7 +945,7 @@ mod tests {
         cache.lock().unwrap().insert("evt_5xx".into(), ("tok_5xx".into(), Instant::now()));
 
         let client = reqwest::Client::new();
-        let used = dispatch_line_reply(&client, "token", &cache, &make_reply("evt_5xx"), &server.uri()).await;
+        let used = dispatch_line_reply(&client, "test_access_token", &cache, &make_reply("evt_5xx"), &server.uri()).await;
 
         assert!(used, "should NOT fall back to Push on 5xx");
     }
@@ -940,7 +962,7 @@ mod tests {
             .timeout(Duration::from_millis(100))
             .build()
             .unwrap();
-        let used = dispatch_line_reply(&client, "token", &cache, &make_reply("evt_net"), bad_base).await;
+        let used = dispatch_line_reply(&client, "test_access_token", &cache, &make_reply("evt_net"), bad_base).await;
 
         assert!(used, "should NOT fall back to Push on network error");
     }

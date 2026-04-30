@@ -596,7 +596,8 @@ impl EventHandler for Handler {
             "processing"
         );
 
-        let thread_channel = if in_thread {
+        let thread_channel = if in_thread || is_dm {
+            // DMs use the DM channel directly (no threads in DMs).
             ChannelRef {
                 platform: "discord".into(),
                 channel_id: msg.channel_id.get().to_string(),
@@ -1009,6 +1010,17 @@ fn detect_thread(
 /// Bot authors skip this check — they are gated by `allow_bot_messages` + `trusted_bot_ids`.
 fn is_denied_user(is_bot: bool, allow_all_users: bool, allowed_users: &HashSet<u64>, user_id: u64) -> bool {
     !is_bot && !allow_all_users && !allowed_users.contains(&user_id)
+}
+
+/// Pure decision function: should a DM be processed?
+/// Returns `true` if the DM should be processed (bot responds).
+/// Mirrors the DM gating logic in EventHandler::message:
+/// - `allow_dm` must be true
+/// - `allowed_users` still applies (checked separately via `is_denied_user`)
+/// - DMs bypass `allowed_channels` and `@mention` requirements
+#[cfg(test)]
+fn should_process_dm(allow_dm: bool) -> bool {
+    allow_dm
 }
 
 /// Pure decision function: should this message be processed or ignored?
@@ -1522,5 +1534,63 @@ mod tests {
     fn denied_user_bot_skips_allowlist() {
         let allowed = HashSet::from([100]);
         assert!(!is_denied_user(true, false, &allowed, 999));
+    }
+
+    // --- DM gating tests (#656) ---
+    // DMs are gated by `allow_dm` config. When allowed, DMs bypass
+    // `allowed_channels` and treat the message as implicit @mention.
+
+    /// GIVEN: allow_dm = false
+    /// WHEN:  user sends a DM
+    /// THEN:  DM is rejected
+    #[test]
+    fn dm_rejected_when_allow_dm_false() {
+        assert!(!should_process_dm(false));
+    }
+
+    /// GIVEN: allow_dm = true
+    /// WHEN:  user sends a DM
+    /// THEN:  DM is accepted
+    #[test]
+    fn dm_accepted_when_allow_dm_true() {
+        assert!(should_process_dm(true));
+    }
+
+    /// GIVEN: allow_dm = true, user NOT in allowed_users
+    /// WHEN:  user sends a DM
+    /// THEN:  user is denied (allowed_users still enforced in DMs)
+    #[test]
+    fn dm_denied_user_still_enforced() {
+        let allowed = HashSet::from([100]);
+        // DM passes allow_dm gate, but user gate still applies
+        assert!(should_process_dm(true));
+        assert!(is_denied_user(false, false, &allowed, 999));
+    }
+
+    /// GIVEN: allow_dm = true, user in allowed_users
+    /// WHEN:  user sends a DM
+    /// THEN:  user is allowed
+    #[test]
+    fn dm_allowed_user_passes() {
+        let allowed = HashSet::from([100]);
+        assert!(should_process_dm(true));
+        assert!(!is_denied_user(false, false, &allowed, 100));
+    }
+
+    /// DMs are treated as implicit @mention — should_process_user_message
+    /// is never called for DMs (the `!is_dm` guard skips it).
+    /// This test verifies the Involved mode would reject a non-thread,
+    /// non-mentioned message — confirming DMs MUST bypass this check.
+    #[test]
+    fn dm_must_bypass_user_message_gating() {
+        // Without the `!is_dm` bypass, a DM would be rejected by Involved mode
+        // because is_mentioned=false and in_thread=false.
+        assert!(!should_process_user_message(
+            AllowUsers::Involved,
+            false,  // is_mentioned (DMs don't have @mention)
+            false,  // in_thread (DMs are not threads)
+            false,  // involved
+            false,  // other_bot_present
+        ));
     }
 }

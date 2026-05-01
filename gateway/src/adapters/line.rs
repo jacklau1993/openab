@@ -115,7 +115,23 @@ pub async fn webhook(
             .and_then(|s| s.user_id.as_deref())
             .unwrap_or("unknown");
 
-        let event_id = format!("evt_{}", uuid::Uuid::new_v4());
+        let gateway_event = GatewayEvent::new(
+            "line",
+            ChannelInfo {
+                id: channel_id.clone(),
+                channel_type,
+                thread_id: None,
+            },
+            SenderInfo {
+                id: user_id.into(),
+                name: user_id.into(),
+                display_name: user_id.into(),
+                is_bot: false,
+            },
+            text,
+            &msg.id,
+            vec![],
+        );
 
         // Cache the reply token for hybrid Reply/Push dispatch
         if let Some(ref reply_token) = event.reply_token {
@@ -130,37 +146,12 @@ pub async fn webhook(
                 );
             } else {
                 cache.insert(
-                    event_id.clone(),
+                    gateway_event.event_id.clone(),
                     (reply_token.clone(), std::time::Instant::now()),
                 );
-                info!(event_id = %event_id, "cached LINE replyToken");
+                info!(event_id = %gateway_event.event_id, "cached LINE replyToken");
             }
         }
-
-        let gateway_event = GatewayEvent {
-            schema: "openab.gateway.event.v1".into(),
-            event_id,
-            timestamp: chrono::Utc::now().to_rfc3339(),
-            platform: "line".into(),
-            event_type: "message".into(),
-            channel: ChannelInfo {
-                id: channel_id.clone(),
-                channel_type,
-                thread_id: None,
-            },
-            sender: SenderInfo {
-                id: user_id.into(),
-                name: user_id.into(),
-                display_name: user_id.into(),
-                is_bot: false,
-            },
-            content: Content {
-                content_type: "text".into(),
-                text: text.clone(),
-            },
-            mentions: vec![],
-            message_id: msg.id.clone(),
-        };
 
         let json = serde_json::to_string(&gateway_event).unwrap();
         info!(channel = %channel_id, sender = %user_id, "line → gateway");

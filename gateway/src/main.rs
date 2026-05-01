@@ -100,14 +100,6 @@ async fn handle_oab_connection(state: Arc<AppState>, socket: axum::extract::ws::
         let client = reqwest::Client::new();
         while let Some(Ok(msg)) = ws_rx.next().await {
             if let Message::Text(text) = msg {
-                // Check if it's a response to a pending command
-                if let Ok(resp) = serde_json::from_str::<schema::GatewayResponse>(&*text) {
-                    if resp.schema == "openab.gateway.response.v1" {
-                        let _ = state_for_recv.event_tx.send(text.to_string());
-                        continue;
-                    }
-                }
-
                 match serde_json::from_str::<GatewayReply>(&*text) {
                     Ok(reply) => {
                         info!(
@@ -200,13 +192,12 @@ async fn main() -> Result<()> {
         app = app.route(&webhook_path, post(adapters::telegram::webhook));
     }
 
-    // LINE adapter
+    // LINE adapter — route is always mounted so inbound webhooks are accepted
+    // even without an access token (signature validation only needs LINE_CHANNEL_SECRET).
     let line_channel_secret = std::env::var("LINE_CHANNEL_SECRET").ok();
     let line_access_token = std::env::var("LINE_CHANNEL_ACCESS_TOKEN").ok();
-    if line_access_token.is_some() {
-        info!("line adapter enabled");
-        app = app.route("/webhook/line", post(adapters::line::webhook));
-    }
+    info!("line adapter enabled");
+    app = app.route("/webhook/line", post(adapters::line::webhook));
 
     if telegram_bot_token.is_none() && line_access_token.is_none() {
         warn!("no adapters configured — set TELEGRAM_BOT_TOKEN and/or LINE_CHANNEL_ACCESS_TOKEN");

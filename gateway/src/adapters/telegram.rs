@@ -38,6 +38,8 @@ struct TelegramChat {
     id: i64,
     #[serde(rename = "type")]
     chat_type: String,
+    #[allow(dead_code)]
+    is_forum: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]

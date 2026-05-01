@@ -158,7 +158,8 @@ impl AcpConnection {
         // Only [agent].env values + essential baseline vars are passed through.
         cmd.env_clear();
         cmd.env("HOME", working_dir);
-        cmd.env("PATH", std::env::var("PATH").unwrap_or_default());
+        cmd.env("USER", std::env::var("USER").unwrap_or_else(|_| "agent".into()));
+        cmd.env("PATH", std::env::var("PATH").unwrap_or_else(|_| "/usr/local/bin:/usr/bin:/bin".into()));
         for (k, v) in env {
             cmd.env(k, expand_env(v));
         }
@@ -166,7 +167,7 @@ impl AcpConnection {
             let keys: Vec<&String> = env.keys().collect();
             tracing::warn!(
                 ?keys,
-                "⚠️ [agent].env is set — these values are accessible to the agent and could be exfiltrated via prompt injection"
+                "[agent].env is set -- these values are accessible to the agent and could be exfiltrated via prompt injection"
             );
         }
         let mut proc = cmd

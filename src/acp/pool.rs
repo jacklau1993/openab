@@ -136,7 +136,6 @@ impl SessionPool {
             &self.config.command,
             &self.config.args,
             &self.config.working_dir,
-            &self.config.env,
         )
         .await?;
 

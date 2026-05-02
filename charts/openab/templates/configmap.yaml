@@ -106,6 +106,9 @@ data:
     {{- if $cfg.env }}
     env = { {{ $first := true }}{{ range $k, $v := $cfg.env }}{{ if not $first }}, {{ end }}{{ $k }} = {{ $v | toJson }}{{ $first = false }}{{ end }} }
     {{- end }}
+    {{- if $cfg.inheritEnv }}
+    inherit_env = {{ $cfg.inheritEnv | toJson }}
+    {{- end }}
 
     [pool]
     max_sessions = {{ ($cfg.pool).maxSessions | default 10 }}

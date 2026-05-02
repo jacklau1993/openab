@@ -142,3 +142,19 @@ tests:
       - matchRegex:
           path: data["config.toml"]
           pattern: 'max_bot_turns = 30'
+
+  - it: renders inherit_env as TOML array
+    set:
+      agents.kiro.inheritEnv:
+        - "API_BASE_URL"
+        - "MODEL_NAME"
+    asserts:
+      - matchRegex:
+          path: data["config.toml"]
+          pattern: 'inherit_env = \["API_BASE_URL","MODEL_NAME"\]'
+
+  - it: does not render inherit_env when unset
+    asserts:
+      - notMatchRegex:
+          path: data["config.toml"]
+          pattern: 'inherit_env'

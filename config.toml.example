@@ -59,6 +59,14 @@ working_dir = "/home/agent"
 # All supported backends support OAuth login — prefer that over env var API keys.
 # Note: env vars here can override baseline vars (HOME, PATH, USER) if needed.
 # env = { ANTHROPIC_API_KEY = "${ANTHROPIC_API_KEY}" }
+#
+# By default, the agent subprocess only inherits these baseline vars:
+#   Linux/macOS: HOME, PATH, USER
+#   Windows:     USERPROFILE, USERNAME, PATH, SystemRoot, SystemDrive
+#
+# To pass additional env vars from the OAB process (e.g. vars injected via K8s envFrom),
+# list them in inherit_env. Keys in [agent].env take precedence over inherited ones.
+# inherit_env = ["API_BASE_URL", "MODEL_NAME"]
 
 # [agent]
 # command = "codex"

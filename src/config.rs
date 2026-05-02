@@ -217,6 +217,8 @@ pub struct AgentConfig {
     pub working_dir: String,
     #[serde(default)]
     pub env: HashMap<String, String>,
+    #[serde(default)]
+    pub inherit_env: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

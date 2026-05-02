@@ -122,12 +122,39 @@ pub struct AcpConnection {
     _reader_handle: JoinHandle<()>,
 }
 
+/// Build the final set of env vars for the agent subprocess.
+/// `explicit` ([agent].env) takes precedence over `inherit` ([agent].inherit_env).
+/// Returns (merged env map, list of keys that were inherited from the process).
+fn build_agent_env(
+    explicit: &std::collections::HashMap<String, String>,
+    inherit_keys: &[String],
+) -> (std::collections::HashMap<String, String>, Vec<String>) {
+    let mut result: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut inherited: Vec<String> = Vec::new();
+
+    for (k, v) in explicit {
+        result.insert(k.clone(), expand_env(v));
+    }
+
+    for key in inherit_keys {
+        if !result.contains_key(key) {
+            if let Ok(v) = std::env::var(key) {
+                result.insert(key.clone(), v);
+                inherited.push(key.clone());
+            }
+        }
+    }
+
+    (result, inherited)
+}
+
 impl AcpConnection {
     pub async fn spawn(
         command: &str,
         args: &[String],
         working_dir: &str,
         env: &std::collections::HashMap<String, String>,
+        inherit_env: &[String],
     ) -> Result<Self> {
         info!(cmd = command, ?args, cwd = working_dir, "spawning agent");
 
@@ -178,11 +205,19 @@ impl AcpConnection {
         for (k, v) in env {
             cmd.env(k, expand_env(v));
         }
-        if !env.is_empty() {
-            let keys: Vec<&String> = env.keys().collect();
+        // Inherit selected env vars from the OAB process (e.g. vars injected
+        // via Kubernetes envFrom).  Keys already in [agent].env are skipped —
+        // explicit values take precedence.
+        let (agent_env, inherited_keys) = build_agent_env(env, inherit_env);
+        for (k, v) in &agent_env {
+            cmd.env(k, v);
+        }
+        if !agent_env.is_empty() {
+            let explicit_keys: Vec<&String> = env.keys().collect();
             tracing::warn!(
-                ?keys,
-                "[agent].env is set -- these values are accessible to the agent and could be exfiltrated via prompt injection"
+                ?explicit_keys,
+                ?inherited_keys,
+                "[agent].env/inherit_env is set -- these values are accessible to the agent and could be exfiltrated via prompt injection"
             );
         }
         let mut proc = cmd
@@ -559,7 +594,7 @@ impl Drop for AcpConnection {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_permission_response, pick_best_option};
+    use super::{build_agent_env, build_permission_response, pick_best_option};
     use serde_json::json;
 
     #[test]
@@ -651,5 +686,45 @@ mod tests {
             response,
             json!({"outcome": {"outcome": "selected", "optionId": "allow_always"}})
         );
+    }
+
+    #[test]
+    fn explicit_env_takes_precedence_over_inherit_env() {
+        let key = "OAB_TEST_PRECEDENCE";
+        std::env::set_var(key, "from_process");
+        let mut explicit = std::collections::HashMap::new();
+        explicit.insert(key.to_string(), "from_config".to_string());
+        let inherit = vec![key.to_string()];
+
+        let (result, inherited) = build_agent_env(&explicit, &inherit);
+
+        assert_eq!(result.get(key).unwrap(), "from_config");
+        assert!(!inherited.contains(&key.to_string()));
+        std::env::remove_var(key);
+    }
+
+    #[test]
+    fn inherit_env_copies_from_process() {
+        let key = "OAB_TEST_INHERIT";
+        std::env::set_var(key, "process_value");
+        let explicit = std::collections::HashMap::new();
+        let inherit = vec![key.to_string()];
+
+        let (result, inherited) = build_agent_env(&explicit, &inherit);
+
+        assert_eq!(result.get(key).unwrap(), "process_value");
+        assert!(inherited.contains(&key.to_string()));
+        std::env::remove_var(key);
+    }
+
+    #[test]
+    fn inherit_env_skips_missing_vars() {
+        let explicit = std::collections::HashMap::new();
+        let inherit = vec!["OAB_TEST_NONEXISTENT_VAR_12345".to_string()];
+
+        let (result, inherited) = build_agent_env(&explicit, &inherit);
+
+        assert!(!result.contains_key("OAB_TEST_NONEXISTENT_VAR_12345"));
+        assert!(inherited.is_empty());
     }
 }

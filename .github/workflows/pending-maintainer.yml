@@ -94,7 +94,10 @@ jobs:
                 issue_number: prNumber,
                 per_page: 100
               });
-              const humanComments = allComments.filter(c => !c.user.type || c.user.type !== 'Bot');
+              const EXCLUDED_BOTS = ['shaun-agent'];
+              const humanComments = allComments.filter(c =>
+                c.user.type !== 'Bot' && !EXCLUDED_BOTS.includes(c.user.login)
+              );
               // If there are human comments, check who spoke last.
               // Last comment by someone other than author = ball is with contributor, skip.
               // No human comments = new PR awaiting first review, fall through.

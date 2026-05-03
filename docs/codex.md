@@ -61,8 +61,9 @@ kubectl rollout restart deployment/openab-codex
 
 ## Image Generation
 
-Codex image generation is controlled by the Codex CLI feature flag
-`image_generation`. Enable it once inside the pod:
+Codex built-in image generation uses the **`gpt-image-2`** model under the hood.
+It is controlled by the Codex CLI feature flag `image_generation`. Enable it
+once inside the pod:
 
 ```bash
 kubectl exec -it deployment/openab-codex -- \

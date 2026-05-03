@@ -128,6 +128,7 @@ Everything under `~/` is mounted on a PVC — see the migration diagram above. K
 ~/.ssh/          → SSH keys and config
 ~/.config/       → tool configs (glab, wrangler, etc.)
 ~/.kiro/         → agent steering docs and memory
+~/.openab/       → OpenAB runtime data (cronjobs, etc.)
 ```
 
 The only time tools are lost is if the PVC itself is deleted.

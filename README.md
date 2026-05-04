@@ -156,10 +156,6 @@ The bot creates a thread. After that, just type in the thread — no @mention ne
 
 > 🔧 Running multiple agents? See [docs/multi-agent.md](docs/multi-agent.md)
 
-## Local Development
-
-> 🛠️ See [docs/local-dev.md](docs/local-dev.md) for setup instructions, remote config, and security considerations.
-
 ## Configuration Reference
 
 > 📖 Full reference with all options, defaults, and Helm mapping: [docs/config-reference.md](docs/config-reference.md)

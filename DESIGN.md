@@ -67,7 +67,7 @@ Each agent runs in its own pod with:
 
 Running OpenAB directly on a host (Linux, macOS, Windows) is supported **only for local development and testing**. For all other use cases, OpenAB must run in a sandbox. The security model assumes pod-level isolation.
 
-This is a fundamental architectural difference. OpenClaw, for example, was originally designed to give agents full access to host resources, and later added sandboxing as an opt-in hardening measure. OpenAB takes the opposite path: the agent starts inside a sandbox on day one. There is nothing to opt into — isolation is the default, and the user must explicitly grant any additional access.
+This is a fundamental architectural difference. OpenClaw, for example, was originally designed to give agents full access to host resources, and later added sandboxing as an opt-in hardening measure. OpenAB takes the opposite path: the agent is locked inside a sandbox on day one. It cannot break out of the sandbox, and there is no opt-in to escape it. The sandbox is not a default — it is the only option.
 
 ## Architecture
 

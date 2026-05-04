@@ -37,11 +37,16 @@ A lightweight, secure, cloud-native ACP harness that bridges **Discord, Slack**,
 ## Features
 
 - **Multi-platform** — supports Discord and Slack, run one or both simultaneously
+- **Custom Gateway** — extend to Telegram, LINE, Feishu/Lark, Google Chat, MS Teams via standalone [gateway](gateway/)
 - **Pluggable agent backend** — swap between Kiro CLI, Claude Code, Codex, Gemini, OpenCode, Copilot CLI via config
 - **@mention trigger** — mention the bot in an allowed channel to start a conversation
 - **Thread-based multi-turn** — auto-creates threads; no @mention needed for follow-ups
+- **Multi-agent collaboration** — bot-to-bot messaging for coordinated workflows ([docs/multi-agent.md](docs/multi-agent.md))
 - **Edit-streaming** — live-updates the Discord message every 1.5s as tokens arrive
 - **Emoji status reactions** — 👀→🤔→🔥/👨‍💻/⚡→👍+random mood face
+- **Image & file support** — send images and files through chat ([docs/sendimages.md](docs/sendimages.md), [docs/sendfiles.md](docs/sendfiles.md))
+- **Scheduled messages** — config-driven cron jobs for automated agent prompts ([docs/cronjob.md](docs/cronjob.md))
+- **Slash commands** — built-in slash command support ([docs/slash-commands.md](docs/slash-commands.md))
 - **Session pool** — one CLI process per thread, auto-managed lifecycle
 - **ACP protocol** — JSON-RPC over stdio with tool call, thinking, and permission auto-reply support
 - **Kubernetes-ready** — Dockerfile + k8s manifests with PVC for auth persistence

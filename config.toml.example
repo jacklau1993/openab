@@ -11,6 +11,8 @@ allowed_channels = ["1234567890"]       # ↑ omitted + non-empty list → auto-
 # allow_bot_messages = "off"  # "off" (default) | "mentions" | "all"
                                # "mentions" is recommended for multi-agent collaboration
 # trusted_bot_ids = []         # empty = any bot (mode permitting); set to restrict
+# allowed_role_ids = []        # role IDs that trigger the bot (same as direct @mention)
+                               # note: if multiple bots share the same role, all will respond simultaneously
 # allow_user_messages = "involved"  # "involved" (default) | "mentions"
                                      # "involved" = reply in threads bot owns or has participated in
                                      # "mentions" = always require @mention

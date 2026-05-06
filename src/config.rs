@@ -161,6 +161,11 @@ pub struct DiscordConfig {
     /// Human message resets the counter. Default: 100.
     #[serde(default = "default_max_bot_turns")]
     pub max_bot_turns: u32,
+    /// Role IDs that trigger the bot (same as direct @mention).
+    /// When a message mentions a role in this list, it is treated as a bot trigger.
+    /// Empty (default) = role mentions do not trigger the bot.
+    #[serde(default)]
+    pub allowed_role_ids: Vec<String>,
     /// Allow the bot to respond to Discord direct messages (DMs).
     /// Default: false (opt-in). `allowed_users` still applies in DMs.
     #[serde(default)]

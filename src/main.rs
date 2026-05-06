@@ -374,12 +374,14 @@ async fn main() -> anyhow::Result<()> {
         let allowed_users = parse_id_set(&discord_cfg.allowed_users, "discord.allowed_users")?;
         let trusted_bot_ids =
             parse_id_set(&discord_cfg.trusted_bot_ids, "discord.trusted_bot_ids")?;
+        let allowed_role_ids = parse_id_set(&discord_cfg.allowed_role_ids, "discord.allowed_role_ids")?;
         info!(
             allow_all_channels,
             allow_all_users,
             channels = allowed_channels.len(),
             users = allowed_users.len(),
             trusted_bots = trusted_bot_ids.len(),
+            role_triggers = allowed_role_ids.len(),
             allow_bot_messages = ?discord_cfg.allow_bot_messages,
             allow_user_messages = ?discord_cfg.allow_user_messages,
             allow_dm = discord_cfg.allow_dm,
@@ -410,6 +412,7 @@ async fn main() -> anyhow::Result<()> {
             allow_bot_messages: discord_cfg.allow_bot_messages,
             trusted_bot_ids,
             allow_user_messages: discord_cfg.allow_user_messages,
+            allowed_role_ids,
             participated_threads: tokio::sync::Mutex::new(std::collections::HashMap::new()),
             multibot_threads: tokio::sync::Mutex::new(std::collections::HashMap::new()),
             session_ttl: std::time::Duration::from_secs(ttl_secs),

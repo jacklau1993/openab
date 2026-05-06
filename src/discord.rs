@@ -155,6 +155,8 @@ pub struct Handler {
     pub allow_bot_messages: AllowBots,
     pub trusted_bot_ids: HashSet<u64>,
     pub allow_user_messages: AllowUsers,
+    /// Role IDs that trigger the bot (same as direct @mention).
+    pub allowed_role_ids: HashSet<u64>,
     /// Positive-only cache: thread channel_id → cached_at for threads where bot has participated.
     pub participated_threads: tokio::sync::Mutex<HashMap<String, tokio::time::Instant>>,
     /// Positive-only cache: thread channel_id → cached_at for threads where other bots have posted.
@@ -379,7 +381,9 @@ impl EventHandler for Handler {
             self.allow_all_channels || self.allowed_channels.contains(&channel_id);
 
         let is_mentioned =
-            msg.mentions_user_id(bot_id) || msg.content.contains(&format!("<@{}>", bot_id));
+            msg.mentions_user_id(bot_id) || msg.content.contains(&format!("<@{}>", bot_id))
+            || (!self.allowed_role_ids.is_empty()
+                && msg.mention_roles.iter().any(|r| self.allowed_role_ids.contains(&r.get())));
 
         // Bot message gating (from upstream #321)
         if msg.author.bot {
@@ -570,7 +574,7 @@ impl EventHandler for Handler {
             return;
         }
 
-        let prompt = resolve_mentions(&msg.content, bot_id);
+        let prompt = resolve_mentions(&msg.content, bot_id, &self.allowed_role_ids);
 
         // No text and no attachments → skip
         if prompt.is_empty() && msg.attachments.is_empty() {
@@ -1264,13 +1268,19 @@ fn is_thread_already_exists_error(err: &anyhow::Error) -> bool {
 static ROLE_MENTION_RE: LazyLock<regex::Regex> =
     LazyLock::new(|| regex::Regex::new(r"<@&\d+>").unwrap());
 
-fn resolve_mentions(content: &str, bot_id: UserId) -> String {
+fn resolve_mentions(content: &str, bot_id: UserId, allowed_role_ids: &HashSet<u64>) -> String {
     // 1. Strip the bot's own trigger mention
     let out = content
         .replace(&format!("<@{}>", bot_id), "")
         .replace(&format!("<@!{}>", bot_id), "");
-    // 2. Other user mentions: keep <@UID> as-is so the LLM can mention back
-    // 3. Fallback: replace role mentions only (user mentions are preserved)
+    // 2. Strip allowed role mentions (they triggered the bot, not useful in prompt)
+    let out = if allowed_role_ids.is_empty() {
+        out
+    } else {
+        allowed_role_ids.iter().fold(out, |s, id| s.replace(&format!("<@&{}>", id), ""))
+    };
+    // 3. Other user mentions: keep <@UID> as-is so the LLM can mention back
+    // 4. Fallback: replace remaining role mentions only (user mentions are preserved)
     let out = ROLE_MENTION_RE.replace_all(&out, "@(role)").to_string();
     out.trim().to_string()
 }
@@ -1416,7 +1426,7 @@ mod tests {
     #[test]
     fn resolve_mentions_strips_bot_mention() {
         let bot_id = UserId::new(111);
-        let result = resolve_mentions("hello <@111> world", bot_id);
+        let result = resolve_mentions("hello <@111> world", bot_id, &HashSet::new());
         assert_eq!(result, "hello  world");
     }
 
@@ -1424,7 +1434,7 @@ mod tests {
     #[test]
     fn resolve_mentions_strips_bot_mention_legacy() {
         let bot_id = UserId::new(111);
-        let result = resolve_mentions("hello <@!111> world", bot_id);
+        let result = resolve_mentions("hello <@!111> world", bot_id, &HashSet::new());
         assert_eq!(result, "hello  world");
     }
 
@@ -1432,7 +1442,7 @@ mod tests {
     #[test]
     fn resolve_mentions_preserves_other_user_mentions() {
         let bot_id = UserId::new(111);
-        let result = resolve_mentions("<@111> say hi to <@222>", bot_id);
+        let result = resolve_mentions("<@111> say hi to <@222>", bot_id, &HashSet::new());
         assert_eq!(result, "say hi to <@222>");
     }
 
@@ -1440,7 +1450,7 @@ mod tests {
     #[test]
     fn resolve_mentions_replaces_role_mentions() {
         let bot_id = UserId::new(111);
-        let result = resolve_mentions("hello <@&999>", bot_id);
+        let result = resolve_mentions("hello <@&999>", bot_id, &HashSet::new());
         assert_eq!(result, "hello @(role)");
     }
 
@@ -1448,8 +1458,26 @@ mod tests {
     #[test]
     fn resolve_mentions_empty_after_strip() {
         let bot_id = UserId::new(111);
-        let result = resolve_mentions("<@111>", bot_id);
+        let result = resolve_mentions("<@111>", bot_id, &HashSet::new());
         assert_eq!(result, "");
+    }
+
+    /// Allowed role mentions are stripped from prompt (not replaced with @(role)).
+    #[test]
+    fn resolve_mentions_strips_allowed_role() {
+        let bot_id = UserId::new(111);
+        let roles: HashSet<u64> = [999].into_iter().collect();
+        let result = resolve_mentions("hello <@&999> world", bot_id, &roles);
+        assert_eq!(result, "hello  world");
+    }
+
+    /// Non-allowed role mentions are still replaced with @(role).
+    #[test]
+    fn resolve_mentions_keeps_other_roles_as_placeholder() {
+        let bot_id = UserId::new(111);
+        let roles: HashSet<u64> = [999].into_iter().collect();
+        let result = resolve_mentions("<@&999> check <@&888>", bot_id, &roles);
+        assert_eq!(result, "check @(role)");
     }
 
     // --- thread-race error detection ---

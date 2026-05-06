@@ -44,6 +44,8 @@ agents:
     #     allowBotMessages: "off"
     #     # trustedBotIds: []  # empty = any bot (mode permitting)
     #     trustedBotIds: []
+    #     # allowedRoleIds: []  # role IDs that trigger the bot
+    #     allowedRoleIds: []
     #   workingDir: /home/agent
     #   # nameOverride: custom deployment name (default: <release>-<agentKey>)
     #   nameOverride: ""
@@ -163,6 +165,11 @@ agents:
       allowBotMessages: "off"
       # trustedBotIds: []  # empty = any bot (mode permitting); set to restrict
       trustedBotIds: []
+      # allowedRoleIds: Role IDs that trigger the bot (same as direct @mention).
+      # Create a Discord role, assign it to the bot, then users can @role to trigger.
+      # Empty (default) = role mentions do not trigger the bot.
+      # allowedRoleIds: ["1234567890123456789"]
+      allowedRoleIds: []
       # maxBotTurns: soft cap on consecutive bot turns per thread before
       # the bot stops auto-replying. A human message resets the counter.
       # Default 100 (Rust-side `default_max_bot_turns()`). Raise for long

@@ -41,7 +41,7 @@ Sign in interactively using the OAuth device flow. Credentials are stored on dis
 kubectl exec -it deployment/openab-claude -- claude auth login
 ```
 
-After authenticating, restart the pod to pick up the new credentials:
+After authenticating, restart the pod so the bot process loads the new credentials:
 
 ```bash
 kubectl rollout restart deployment/openab-claude

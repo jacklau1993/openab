@@ -9,6 +9,7 @@ Google Chat ──POST──▶ Gateway (:8080) ◀──WebSocket── OAB Pod
 
 ## Prerequisites
 
+- **A Google Workspace (Business or Enterprise) account** — required by Google to configure the Chat API. Regular `@gmail.com` consumer accounts cannot create Google Chat apps. Workspace Individual or Business Starter is the cheapest qualifying tier. See [Configure the Google Chat API](https://developers.google.com/workspace/chat/configure-chat-api).
 - A running OAB instance (with kiro-cli or any ACP agent authenticated)
 - The Custom Gateway deployed ([gateway/README.md](../gateway/README.md))
 - A Google Cloud project with the Google Chat API enabled
@@ -133,11 +134,19 @@ working_dir = "/home/agent"
 - **Bot message filtering** — bot messages (`user_type: "BOT"`) are filtered at the gateway level
 - **Message splitting** — long replies (>4096 chars) are automatically split at newline/space boundaries
 - **Token auto-refresh** — service account JWT tokens are refreshed automatically before expiry
+- **Markdown formatting** — replies are converted via `markdown_to_gchat` to Google Chat's native formatting:
+  - Bold: `**text**` / `__text__` → `*text*`
+  - Italic: `*text*` → `_text_` (single-underscore `_text_` passes through)
+  - Strikethrough: `~~text~~` → `~text~`
+  - Headings: `# / ## / ###` → `*text*` (rendered as bold)
+  - Links: `[text](url)` → `<url|text>`
+  - Inline code, fenced code blocks: pass through unchanged
+  - Tables and other unsupported syntax pass through as-is
+- **Streaming (edit_message)** — when OAB streaming is enabled, the bot edits its initial reply in-place as tokens arrive (typewriter effect)
 
 ### Not Supported
 
 - **Reactions** — Google Chat API does not support message reactions on behalf of bots
-- **Markdown rendering** — replies are sent as plain text (Google Chat uses its own card markup)
 - **File/image attachments** — not yet implemented
 
 ## Environment Variables (Gateway)

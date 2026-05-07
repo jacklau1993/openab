@@ -1,9 +1,9 @@
 # ADR-001: Agent Cognitive Architecture Specification (ACAS)
 
 - **Status**: Proposed
-- **Spec Version**: 1.4.0
+- **Spec Version**: 1.4.0 (Draft phase numbering; may reset to 1.0.0 upon acceptance)
 - **Date**: 2026-04-23
-- **Author**: pahud.hsieh
+- **Author**: pahud.hsieh (drafted by chaodu-agent)
 - **Revision**: Incorporates review feedback from 周嘟嘟, 小喬, 諸葛亮, 張飛, shaun-agent screening, and Discord live review session. v1.3.0: Added Entry Point Discovery (§1.3 Step 0) and Entry Point Convention (§1.5). v1.4.0: Addressed filesystem isolation constraints — URL support in §1.5, isolated environment guidance in §2.2, shared knowledge limitations in §3.1.
 
 ## Key Words
@@ -90,7 +90,7 @@ When a new agent starts for the first time:
 
 0. **Entry Point Discovery**: The agent MUST locate and read its platform-specific entry file (e.g. `AGENTS.md`, `CLAUDE.md`, `.cursorrules`) which MUST contain a reference to this specification and a pointer to the agent's `identity.yaml` path. Without this entry point, the remaining bootstrap steps will never be triggered. See §1.5 for the entry point convention.
 1. Check if `identity.yaml` exists. If not, generate one from environment config or prompt the operator.
-2. **UID Validation**: The agent MUST verify that `identity.uid` matches its actual platform `sender_id` at runtime. If they differ, the agent MUST refuse to start and log an error. This prevents identity spoofing and the "wrong UID" class of bugs where an agent claims to be someone else.
+2. **UID Validation**: The agent MUST verify that `identity.uid` matches its actual platform `sender_id` at runtime. If they differ, the agent SHOULD log a warning in development/testing environments, but MUST refuse to start in production environments to prevent identity spoofing and the "wrong UID" class of bugs.
 3. Register itself in the peer registry (see §2).
 4. If Level 3: announce presence via the handshake protocol (see §2.2).
 5. Initialize the knowledge database (create SQLite tables if missing).
@@ -306,6 +306,9 @@ CREATE VIRTUAL TABLE knowledge_fts USING fts5(
     content_rowid='id'
 );
 
+CREATE INDEX idx_knowledge_files_owner ON knowledge_files(owner_uid);
+CREATE INDEX idx_knowledge_files_last_writer ON knowledge_files(last_writer_uid);
+
 CREATE TABLE daily_logs (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     date        TEXT NOT NULL,           -- YYYY-MM-DD
@@ -326,6 +329,12 @@ Implementors MUST implement at least one of the following strategies to keep the
 3. **Hash check**: Store file content hashes in `knowledge_files`; compare on read and re-index if mismatched.
 
 If the SQLite database is lost or corrupted, the agent MUST be able to rebuild it entirely from the `.md` files. Agents SHOULD verify index integrity on startup and log a warning if drift is detected.
+
+### 3.6 Schema Migration Strategy
+
+When the ACAS `spec_version` is updated (e.g., from 1.x to 2.0), agents MUST handle migrations for existing `memory.db` and `identity.yaml` files.
+- **identity.yaml**: Agents SHOULD read older versions, apply default values for new fields, and optionally rewrite the file to conform to the new schema.
+- **memory.db**: Agents SHOULD use SQLite `ALTER TABLE` statements or schema versioning tables to migrate the database schema automatically on startup. If an automated migration is not possible, the agent SHOULD backup the old database, recreate the schema, and rebuild the index from the `.md` knowledge files.
 
 ---
 

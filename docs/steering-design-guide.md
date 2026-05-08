@@ -105,7 +105,7 @@ MEMORY.md index (CC auto-memory) Individual memory files (.claude/projects/*/mem
 | Claude Code | `CLAUDE.md` (project) + `~/.claude/CLAUDE.md` (global) + `MEMORY.md` index | Hierarchical loading (global → project → subdir). Auto-memory index is hot (200-line cap); individual memory files are cold. `settings.json` is config, not instructions |
 | Codex | `AGENTS.md` hierarchical (global → project root → subdir) | Each directory loads at most one file. 32KB cap (`project_doc_max_bytes`). Use nested `AGENTS.md` for per-directory responsibility split. No multi-file topic split within same dir |
 | Gemini | `GEMINI.md` hierarchical (`~/.gemini/GEMINI.md` global → `./GEMINI.md` project → subdir) + `MEMORY.md` index | Same hierarchical pattern as CC/Codex. Private project memory index is hot; individual memory files are cold |
-| Copilot | `.github/copilot-instructions.md` (repo-wide) + `.github/instructions/**/*.instructions.md` (path-specific) + `AGENTS.md` (nearest-in-tree) | Layered: Personal > Path-specific > Repo-wide > Agent > Organization. No hard size cap for Chat/Agent (code review reads first 4K chars only). Keep short (~2 pages recommended) |
+| Copilot | `.github/copilot-instructions.md` (repo-wide) + `.github/instructions/**/*.instructions.md` (path-specific) + `AGENTS.md` (nearest-in-tree, where supported: cloud agent / CLI) | Layered: Personal > Path-specific > Repo-wide > Agent > Organization. No documented hard size cap for Chat/Agent (code review reads first 4K chars only). Keep short (~2 pages recommended) |
 | OpenCode | `AGENTS.md` or equivalent | Follows repo convention |
 
 ---

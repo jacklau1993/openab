@@ -1,6 +1,6 @@
 # Steering Design Guide
 
-How to decide what goes into hot memory (always loaded) vs cold storage (searched on demand) for AI coding agents.
+How to organize AI agent memory across three tiers: hot (always loaded), warm (triggered on demand), and cold (searched when needed).
 
 Applies to: Kiro, Claude Code, Codex, Gemini, Copilot, OpenCode — any agent that supports persistent instruction files.
 
@@ -11,7 +11,7 @@ Applies to: Kiro, Claude Code, Codex, Gemini, Copilot, OpenCode — any agent th
 | Term | Meaning | Examples |
 |------|---------|---------|
 | 🔥 **Hot memory** | Loaded every session, always in context | `AGENTS.md`, `.kiro/steering/`, `CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md` |
-| ☕ **Warm context** | Not always loaded, but auto-triggered when conditions match | Codex Skills, Copilot path-specific instructions, CC/Gemini memory index entries, subdir instruction files |
+| ☕ **Warm context** | Not always loaded, but auto-triggered when conditions match | Codex Skills (body), Copilot path-specific instructions, CC/Gemini individual memory files (pointed to by hot index), subdir instruction files |
 | ❄️ **Cold storage** | Searched or retrieved on demand, no automatic trigger | Knowledge bases, `docs/`, project wikis, ADRs, historical records |
 
 ---
@@ -120,7 +120,7 @@ Applies to: Kiro, Claude Code, Codex, Gemini, Copilot, OpenCode — any agent th
 > - **Semantic:** CC/Gemini memory index — agent reads description and decides to load
 > - **Explicit:** Agent calls `activate_skill` or `read_file` when task matches
 
-> **Real-world example:** Claude Code's auto-memory system is a natural implementation of hot/cold separation — `MEMORY.md` index (hot, 200-line cap) points to individual `.md` memory files (cold, loaded on demand). This pattern validates the guide's core principle.
+> **Real-world example:** Claude Code's auto-memory system is a natural implementation of hot/warm separation — `MEMORY.md` index (hot, 200-line cap) points to individual `.md` memory files (warm, loaded when agent determines relevance from index description).
 
 > **Common pattern:** CC, Codex, and Gemini all use hierarchical loading (global → project → subdir). This naturally supports "one file per responsibility" by placing topic-specific rules in the relevant subdirectory's instruction file.
 

@@ -194,24 +194,44 @@ If the agent doesn't follow the rule → it's either not loaded, too buried in o
 
 ## Self-Reflection Prompt
 
-Any agent can use this prompt to audit its own memory allocation against this guide:
+Use this prompt from a fresh session to audit memory allocation against this guide:
 
 ```
-Per the steering design guide, review your current memory allocation:
+Per the steering design guide, audit my current memory allocation:
 
-1. List everything in your hot memory (always loaded). How many lines/KB?
-2. Identify items that violate the guide's principles:
-   - Not behavior-oriented (nice-to-know, not need-to-know)
-   - Duplicated across files (contradiction risk)
-   - Too large (should be warm or cold)
-   - Stale (references missing files or outdated info)
-   - Contains WHY instead of WHAT/HOW
-3. Identify mandatory behaviors currently in cold storage with no trigger path.
-4. Propose an optimization plan:
-   - What to remove from hot
-   - What to promote from cold to warm (with trigger)
-   - What to demote from hot to warm or cold
-   - What's missing from hot that should be there
+1. INVENTORY — List all loaded/discoverable instruction sources:
+   - File path
+   - Layer (Hot / Warm / Cold)
+   - Trigger model (always / directory / file-glob / semantic / explicit)
+   - Approximate size (lines or KB)
+
+2. CLASSIFY — For each item, what type of content is it?
+   - WHAT/HOW (behavior rule) vs WHY (history/rationale)
+   - Identity / hard rule / workflow / reference / trivia
+
+3. VIOLATIONS — Identify items that break the guide's principles:
+   - Not behavior-oriented (nice-to-know in hot)
+   - Duplicated or conflicting across files
+   - Stale links pointing to missing files
+   - Too large for its layer
+   - WHY/history in hot instead of cold
+   - Mandatory behavior in cold with no trigger path
+
+4. TRIGGER QUALITY — Review warm layer triggers:
+   - Are index descriptions precise enough to fire correctly?
+   - Where is the canonical source for each rule?
+   - Will the agent reliably see it when needed?
+
+5. OPTIMIZATION PLAN — Propose concrete moves:
+   - Remove (stale, duplicate, irrelevant)
+   - Keep in hot (behavioral, high-frequency)
+   - Promote cold → warm (add trigger)
+   - Demote hot → warm or cold (too large, low-frequency)
+   - Split (one file doing too many jobs)
+   - Add missing trigger/index entry
+
+6. VERIFY — Name one fresh-session test prompt that would confirm
+   the highest-risk rule still loads correctly.
 ```
 
-Expected output: a concrete before/after with line counts and rationale for each move.
+Expected output: a before/after table with file paths, layer assignments, sizes, and rationale for each move.

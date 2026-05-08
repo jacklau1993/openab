@@ -10,8 +10,9 @@ Applies to: Kiro, Claude Code, Codex, Gemini, Copilot, OpenCode — any agent th
 
 | Term | Meaning | Examples |
 |------|---------|---------|
-| **Hot memory** | Loaded every session, always in context | `AGENTS.md`, `.kiro/steering/`, `CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md` |
-| **Cold storage** | Indexed/searchable, loaded on demand | Knowledge bases, `docs/`, project wikis |
+| 🔥 **Hot memory** | Loaded every session, always in context | `AGENTS.md`, `.kiro/steering/`, `CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md` |
+| ☕ **Warm context** | Not always loaded, but auto-triggered when conditions match | Codex Skills, Copilot path-specific instructions, CC/Gemini memory index entries, subdir instruction files |
+| ❄️ **Cold storage** | Searched or retrieved on demand, no automatic trigger | Knowledge bases, `docs/`, project wikis, ADRs, historical records |
 
 ---
 
@@ -36,6 +37,17 @@ Applies to: Kiro, Claude Code, Codex, Gemini, Copilot, OpenCode — any agent th
 | Design proposals / RFCs | Architecture decisions, feature specs |
 | Lookup tables | Feature flags, config reference, changelogs |
 
+## What Goes in Warm Context
+
+| Criteria | Example |
+|----------|---------|
+| Too large for hot, but has a reliable trigger | Deployment SOP, release checklist |
+| Only relevant for specific file types or paths | Gateway adapter checklist, Helm wiring rules |
+| Domain-specific expert knowledge | Platform auth spec details, crypto implementation patterns |
+| Complex workflows with steps and scripts | Incident triage playbook, skill bodies |
+
+**Rule of thumb:** If it has a clear trigger condition and is > 1KB, make it warm. Keep only the trigger (name + one-line description + path) in hot.
+
 ---
 
 ## Design Principles
@@ -56,11 +68,12 @@ Applies to: Kiro, Claude Code, Codex, Gemini, Copilot, OpenCode — any agent th
 ```
 "If this rule is NOT loaded, will the next response be wrong?"
 │
-├─ Yes → Hot memory
+├─ Yes → 🔥 Hot memory
 │
-├─ Sometimes, depends on task → Hot memory (if small) or cold with reliable trigger
+├─ Only when doing a specific task/touching specific files
+│  → ☕ Warm context (put trigger in hot, body in warm)
 │
-└─ No, it's reference → Cold storage
+└─ No, it's reference → ❄️ Cold storage
 ```
 
 ---
@@ -68,13 +81,21 @@ Applies to: Kiro, Claude Code, Codex, Gemini, Copilot, OpenCode — any agent th
 ## Architecture Pattern
 
 ```
-Hot (always loaded)              Cold (search on demand)
-───────────────────────          ──────────────────────────
-AGENTS.md / CLAUDE.md / GEMINI.md  Knowledge bases (semantic search)
-.kiro/steering/*.md              docs/*.md
-.github/copilot-instructions.md  Project wikis, ADRs, RFCs
-MEMORY.md index (CC/Gemini)      Individual memory files
+🔥 Hot (always loaded)               ☕ Warm (triggered)                    ❄️ Cold (search on demand)
+─────────────────────────            ──────────────────────────            ──────────────────────────
+AGENTS.md / CLAUDE.md / GEMINI.md    Codex Skills (SKILL.md body)          Knowledge bases
+.kiro/steering/*.md                  Copilot path-specific instructions    docs/*.md
+.github/copilot-instructions.md      CC/Gemini individual memory files     Project wikis, ADRs, RFCs
+MEMORY.md index (CC/Gemini)          Subdir instruction files              Historical records
+Skill/trigger metadata               Domain-specific SOPs                  Lessons learned
 ```
+
+**Key insight:** The warm layer's *trigger metadata* lives in hot memory (skill names, index entries, applyTo globs). Only the *body* loads on demand. This is the pattern: **put the table of contents in hot, put the chapters in warm.**
+
+> **Trigger mechanisms vary by agent:**
+> - **Rule-based:** Copilot `applyTo` glob match, Codex skill metadata match
+> - **Semantic:** CC/Gemini memory index — agent reads description and decides to load
+> - **Explicit:** Agent calls `activate_skill` or `read_file` when task matches
 
 > **Real-world example:** Claude Code's auto-memory system is a natural implementation of hot/cold separation — `MEMORY.md` index (hot, 200-line cap) points to individual `.md` memory files (cold, loaded on demand). This pattern validates the guide's core principle.
 
@@ -135,6 +156,7 @@ If the agent doesn't follow the rule → it's either not loaded, too buried in o
 | Hot memory > 20KB | Diminishing returns, attention dilution | Audit and move cold items out |
 | Task-scoped rules in file/directory-scoped locations | Review SOP, response format, collaboration protocol only load when certain files are touched — missing when needed most | Put task-agnostic workflow rules in always-loaded layer, not path-specific |
 | Stale links in hot memory | Index points to missing files; fresh session gets dead references | Audit links quarterly; remove or create the target |
+| Mandatory behavior hidden in cold without trigger | Agent must follow it but has no path to discover it | Add trigger metadata to hot, or promote to warm with clear activation condition |
 
 ---
 

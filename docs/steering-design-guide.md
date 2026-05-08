@@ -72,7 +72,10 @@ AGENTS.md / CLAUDE.md            Knowledge bases (semantic search)
 .kiro/steering/*.md              docs/*.md
 .codex/instructions.md           Project wikis
 .github/copilot-instructions.md  ADRs, RFCs, lessons learned
+MEMORY.md index (CC auto-memory) Individual memory files (.claude/projects/*/memory/*.md)
 ```
+
+> **Real-world example:** Claude Code's auto-memory system is a natural implementation of hot/cold separation — `MEMORY.md` index (hot, 200-line cap) points to individual `.md` memory files (cold, loaded on demand). This pattern validates the guide's core principle.
 
 ---
 
@@ -81,7 +84,7 @@ AGENTS.md / CLAUDE.md            Knowledge bases (semantic search)
 | Agent | Hot Memory Location | Notes |
 |-------|-------------------|-------|
 | Kiro | `AGENTS.md` + `.kiro/steering/*.md` | Multiple files, one per topic |
-| Claude Code | `CLAUDE.md` + `.claude/settings.json` | Single file + config |
+| Claude Code | `CLAUDE.md` (project) + `~/.claude/CLAUDE.md` (global) + `MEMORY.md` index | Hierarchical loading (global → project → subdir). Auto-memory index is hot (200-line cap); individual memory files are cold. `settings.json` is config, not instructions |
 | Codex | `.codex/instructions.md` | Single file |
 | Gemini | `GEMINI.md` or context window | Varies by integration |
 | Copilot | `.github/copilot-instructions.md` | Single file |

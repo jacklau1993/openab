@@ -81,16 +81,39 @@ Applies to: Kiro, Claude Code, Codex, Gemini, Copilot, OpenCode — any agent th
 ## Architecture Pattern
 
 ```
-🔥 Hot (always loaded)               ☕ Warm (triggered)                    ❄️ Cold (search on demand)
-─────────────────────────            ──────────────────────────            ──────────────────────────
-AGENTS.md / CLAUDE.md / GEMINI.md    Codex Skills (SKILL.md body)          Knowledge bases
-.kiro/steering/*.md                  Copilot path-specific instructions    docs/*.md
-.github/copilot-instructions.md      CC/Gemini individual memory files     Project wikis, ADRs, RFCs
-MEMORY.md index (CC/Gemini)          Subdir instruction files              Historical records
-Skill/trigger metadata               Domain-specific SOPs                  Lessons learned
+┌─────────────────────────────────────────────────────────────────┐
+│                    🔥 HOT — Always Loaded                        │
+│                                                                 │
+│  Identity, hard rules, collaboration protocol, trigger index    │
+│  AGENTS.md / CLAUDE.md / GEMINI.md / .kiro/steering/*           │
+│  .github/copilot-instructions.md / MEMORY.md index              │
+│                         < 15KB                                  │
+├─────────────────────────────────────────────────────────────────┤
+│                 ☕ WARM — Progressive Exposure                    │
+│                                                                 │
+│  Auto-loaded when trigger condition matches                     │
+│  Skills (SKILL.md body), path-specific instructions,            │
+│  subdir instruction files, individual memory files,             │
+│  domain SOPs, deployment playbooks                              │
+│                                                                 │
+│  Triggers:  Rule-based (applyTo glob)                           │
+│             Semantic (agent reads index, decides to load)        │
+│             Explicit (activate_skill / read_file)               │
+├─────────────────────────────────────────────────────────────────┤
+│                 ❄️ COLD — Search on Demand                       │
+│                                                                 │
+│  No automatic trigger; requires explicit search/retrieval       │
+│  Knowledge bases, docs/*.md, wikis, ADRs, RFCs,                 │
+│  historical records, lessons learned, team trivia               │
+│                       Unlimited                                  │
+└─────────────────────────────────────────────────────────────────┘
+
+         ▲ Smaller, precise, behavioral
+         │
+         ▼ Larger, reference, historical
 ```
 
-**Key insight:** The warm layer's *trigger metadata* lives in hot memory (skill names, index entries, applyTo globs). Only the *body* loads on demand. This is the pattern: **put the table of contents in hot, put the chapters in warm.**
+**Key insight:** The warm layer's *trigger metadata* lives in hot memory (skill names, index entries, applyTo globs). Only the *body* loads on demand. Pattern: **put the table of contents in hot, put the chapters in warm.**
 
 > **Trigger mechanisms vary by agent:**
 > - **Rule-based:** Copilot `applyTo` glob match, Codex skill metadata match

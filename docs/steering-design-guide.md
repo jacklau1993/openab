@@ -10,7 +10,7 @@ Applies to: Kiro, Claude Code, Codex, Gemini, Copilot, OpenCode — any agent th
 
 | Term | Meaning | Examples |
 |------|---------|---------|
-| **Hot memory** | Loaded every session, always in context | `AGENTS.md`, `.kiro/steering/`, `CLAUDE.md`, `.codex/instructions.md`, `.github/copilot-instructions.md` |
+| **Hot memory** | Loaded every session, always in context | `AGENTS.md`, `.kiro/steering/`, `CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md` |
 | **Cold storage** | Indexed/searchable, loaded on demand | Knowledge bases, `docs/`, project wikis |
 
 ---
@@ -68,10 +68,11 @@ Applies to: Kiro, Claude Code, Codex, Gemini, Copilot, OpenCode — any agent th
 ```
 Hot (always loaded)              Cold (search on demand)
 ───────────────────────          ──────────────────────────
-AGENTS.md / CLAUDE.md            Knowledge bases (semantic search)
+AGENTS.md / CLAUDE.md / GEMINI.md  Knowledge bases (semantic search)
 .kiro/steering/*.md              docs/*.md
-.codex/instructions.md           Project wikis
-.github/copilot-instructions.md  ADRs, RFCs, lessons learned
+.github/copilot-instructions.md  Project wikis, ADRs, RFCs
+MEMORY.md index (CC/Gemini)      Individual memory files
+```
 MEMORY.md index (CC auto-memory) Individual memory files (.claude/projects/*/memory/*.md)
 ```
 

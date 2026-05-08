@@ -133,6 +133,7 @@ If the agent doesn't follow the rule → it's either not loaded, too buried in o
 | Putting case studies in hot memory | Wastes context budget on history | Move to docs, reference by lesson only |
 | Vague rules ("be helpful") | Untestable, no behavioral change | Make specific and testable |
 | Hot memory > 20KB | Diminishing returns, attention dilution | Audit and move cold items out |
+| Task-scoped rules in file/directory-scoped locations | Review SOP, response format, collaboration protocol only load when certain files are touched — missing when needed most | Put task-agnostic workflow rules in always-loaded layer, not path-specific |
 
 ---
 

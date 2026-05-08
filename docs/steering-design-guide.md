@@ -73,8 +73,6 @@ AGENTS.md / CLAUDE.md / GEMINI.md  Knowledge bases (semantic search)
 .github/copilot-instructions.md  Project wikis, ADRs, RFCs
 MEMORY.md index (CC/Gemini)      Individual memory files
 ```
-MEMORY.md index (CC auto-memory) Individual memory files (.claude/projects/*/memory/*.md)
-```
 
 > **Real-world example:** Claude Code's auto-memory system is a natural implementation of hot/cold separation — `MEMORY.md` index (hot, 200-line cap) points to individual `.md` memory files (cold, loaded on demand). This pattern validates the guide's core principle.
 
@@ -134,6 +132,7 @@ If the agent doesn't follow the rule → it's either not loaded, too buried in o
 | Vague rules ("be helpful") | Untestable, no behavioral change | Make specific and testable |
 | Hot memory > 20KB | Diminishing returns, attention dilution | Audit and move cold items out |
 | Task-scoped rules in file/directory-scoped locations | Review SOP, response format, collaboration protocol only load when certain files are touched — missing when needed most | Put task-agnostic workflow rules in always-loaded layer, not path-specific |
+| Stale links in hot memory | Index points to missing files; fresh session gets dead references | Audit links quarterly; remove or create the target |
 
 ---
 
@@ -142,3 +141,4 @@ If the agent doesn't follow the rule → it's either not loaded, too buried in o
 - **Quarterly audit**: Review hot memory files. Remove rules that are no longer relevant or have become default behavior.
 - **After contradictions**: When agent behavior contradicts a rule, check if it's a loading issue or a conflict with another rule.
 - **After new capabilities**: When adding new workflows, decide hot vs cold before writing the doc.
+- **Adding a new agent**: Document its loading model and precedence before adding file mappings. Don't assume it works like existing agents.

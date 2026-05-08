@@ -189,3 +189,29 @@ If the agent doesn't follow the rule → it's either not loaded, too buried in o
 - **After contradictions**: When agent behavior contradicts a rule, check if it's a loading issue or a conflict with another rule.
 - **After new capabilities**: When adding new workflows, decide hot vs cold before writing the doc.
 - **Adding a new agent**: Document its loading model and precedence before adding file mappings. Don't assume it works like existing agents.
+
+---
+
+## Self-Reflection Prompt
+
+Any agent can use this prompt to audit its own memory allocation against this guide:
+
+```
+Per the steering design guide, review your current memory allocation:
+
+1. List everything in your hot memory (always loaded). How many lines/KB?
+2. Identify items that violate the guide's principles:
+   - Not behavior-oriented (nice-to-know, not need-to-know)
+   - Duplicated across files (contradiction risk)
+   - Too large (should be warm or cold)
+   - Stale (references missing files or outdated info)
+   - Contains WHY instead of WHAT/HOW
+3. Identify mandatory behaviors currently in cold storage with no trigger path.
+4. Propose an optimization plan:
+   - What to remove from hot
+   - What to promote from cold to warm (with trigger)
+   - What to demote from hot to warm or cold
+   - What's missing from hot that should be there
+```
+
+Expected output: a concrete before/after with line counts and rationale for each move.

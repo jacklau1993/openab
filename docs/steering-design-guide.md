@@ -83,6 +83,21 @@ MEMORY.md index (CC auto-memory) Individual memory files (.claude/projects/*/mem
 
 ## Agent-Specific File Mapping
 
+> **Note:** Most agents are hybrid — they combine multiple loading models. The table below shows the primary mechanisms.
+
+### Loading Models
+
+| Model | Trigger | Examples |
+|-------|---------|---------|
+| **Always loaded** | Every session/interaction in repo context | Kiro `.kiro/steering/*`, CC/Codex/Gemini root instruction file, Copilot `.github/copilot-instructions.md` |
+| **Directory-scoped** | Processing files within that directory tree | CC/Codex/Gemini subdir instruction files, Copilot `AGENTS.md` (nearest-in-tree) |
+| **File-scoped** | Matching an `applyTo` glob pattern | Copilot `.github/instructions/**/*.instructions.md` |
+
+**Implication for hot memory design:**
+- "Always loaded" = put task-agnostic rules here (identity, verdict logic, workflow triggers)
+- "Directory-scoped" = put domain-specific rules here (gateway checklist, docs standards)
+- "File-scoped" = put file-type-specific review expectations here (only Copilot supports this natively)
+
 | Agent | Hot Memory Location | Notes |
 |-------|-------------------|-------|
 | Kiro | `AGENTS.md` + `.kiro/steering/*.md` | Multiple files, one per topic |

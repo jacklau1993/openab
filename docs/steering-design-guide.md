@@ -46,6 +46,8 @@ Applies to: Kiro, Claude Code, Codex, Gemini, Copilot, OpenCode — any agent th
 4. **Testable** — Each rule should be verifiable with a single prompt from a fresh session.
 5. **One file per responsibility** — Separate concerns: identity, review process, workflow triggers. Avoid monolithic instruction files.
 6. **Hot/cold separation** — If the agent can find it via search when needed, it doesn't need to be always-loaded.
+7. **Structure over prose** — Use lists, tables, or key-value pairs in hot memory. LLMs follow structured constraints more reliably than natural language paragraphs.
+8. **WHAT and HOW only** — Hot memory defines what to do and how. Put the WHY (historical context, incident backstory) in cold storage (ADRs, lessons learned).
 
 ---
 

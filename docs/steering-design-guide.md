@@ -1,5 +1,17 @@
 # Steering Design Guide
 
+## Problem
+
+AI coding agents load persistent instructions every session, but without deliberate organization:
+- **Bloated instructions** dilute attention — critical rules get buried in noise
+- **Duplicated rules** across files inevitably contradict each other when one is updated
+- **Missing triggers** mean mandatory behaviors live in docs the agent never reads
+- **No shared standard** across agents leads to each team reinventing the wheel
+
+This guide establishes a universal framework for organizing agent memory into layers, so rules are reliably followed, context budgets are respected, and teams can onboard new agents without starting from scratch.
+
+---
+
 How to organize AI agent memory across three tiers: hot (always loaded), warm (triggered on demand), and cold (searched when needed).
 
 Applies to: Kiro, Claude Code, Codex, Gemini, Copilot, OpenCode — any agent that supports persistent instruction files.

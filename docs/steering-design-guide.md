@@ -197,7 +197,7 @@ If the agent doesn't follow the rule → it's either not loaded, too buried in o
 Use this prompt from a fresh session to audit memory allocation against this guide:
 
 ```
-Per the steering design guide, audit my current memory allocation:
+Per the steering design guide in docs/steering-design-guide.md from OpenAB GitHub repo, review your current memory allocation:
 
 1. INVENTORY — List all loaded/discoverable instruction sources:
    - File path

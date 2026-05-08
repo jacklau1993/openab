@@ -40,7 +40,7 @@ Applies to: Kiro, Claude Code, Codex, Gemini, Copilot, OpenCode — any agent th
 
 ## Design Principles
 
-1. **Small and precise** — Keep hot memory under ~15KB total. Larger context dilutes attention on critical rules.
+1. **Small and precise** — Keep hot memory concise. Practical caps vary by agent (CC: ~200 lines for MEMORY.md, Codex: 32KB, Kiro: ~15KB recommended). Regardless of hard limits, attention dilution is the real constraint — less is more.
 2. **Behavior-oriented** — Every line should change "what the agent does next." Remove anything that's just "nice to know."
 3. **Single source of truth** — Define each rule in exactly one place. Duplication across files creates contradiction risk.
 4. **Testable** — Each rule should be verifiable with a single prompt from a fresh session.
@@ -77,6 +77,8 @@ MEMORY.md index (CC auto-memory) Individual memory files (.claude/projects/*/mem
 
 > **Real-world example:** Claude Code's auto-memory system is a natural implementation of hot/cold separation — `MEMORY.md` index (hot, 200-line cap) points to individual `.md` memory files (cold, loaded on demand). This pattern validates the guide's core principle.
 
+> **Common pattern:** CC, Codex, and Gemini all use hierarchical loading (global → project → subdir). This naturally supports "one file per responsibility" by placing topic-specific rules in the relevant subdirectory's instruction file.
+
 ---
 
 ## Agent-Specific File Mapping
@@ -85,9 +87,9 @@ MEMORY.md index (CC auto-memory) Individual memory files (.claude/projects/*/mem
 |-------|-------------------|-------|
 | Kiro | `AGENTS.md` + `.kiro/steering/*.md` | Multiple files, one per topic |
 | Claude Code | `CLAUDE.md` (project) + `~/.claude/CLAUDE.md` (global) + `MEMORY.md` index | Hierarchical loading (global → project → subdir). Auto-memory index is hot (200-line cap); individual memory files are cold. `settings.json` is config, not instructions |
-| Codex | `.codex/instructions.md` | Single file |
-| Gemini | `GEMINI.md` or context window | Varies by integration |
-| Copilot | `.github/copilot-instructions.md` | Single file |
+| Codex | `AGENTS.md` hierarchical (global → project root → subdir) | Each directory loads at most one file. 32KB cap (`project_doc_max_bytes`). Use nested `AGENTS.md` for per-directory responsibility split. No multi-file topic split within same dir |
+| Gemini | `GEMINI.md` hierarchical (`~/.gemini/GEMINI.md` global → `./GEMINI.md` project → subdir) + `MEMORY.md` index | Same hierarchical pattern as CC/Codex. Private project memory index is hot; individual memory files are cold |
+| Copilot | `.github/copilot-instructions.md` | Single file (pending confirmation) |
 | OpenCode | `AGENTS.md` or equivalent | Follows repo convention |
 
 ---

@@ -621,20 +621,39 @@ impl AdapterRouter {
 
                     let final_content = markdown::convert_tables(&final_content, table_mode);
                     // Parse output directives (e.g. [[reply_to:msg_id]]) from content header.
-                    // Note: reply_to only takes effect in send-once mode (placeholder_msg == None).
-                    // In streaming mode, the placeholder is already sent before we know the directive.
-                    // This is acceptable: streaming is disabled in multi-bot threads (where reply-to
-                    // matters most), so the common multi-agent case always uses send-once.
                     let (directives, stripped_content) = parse_output_directives(&final_content);
                     let final_content = stripped_content;
                     let chunks = format::split_message(&final_content, message_limit);
                     if let Some(msg) = placeholder_msg {
-                        // Streaming: edit first chunk into placeholder, send rest as new messages
-                        if let Some(first) = chunks.first() {
-                            let _ = adapter.edit_message(&msg, first).await;
-                        }
-                        for chunk in chunks.iter().skip(1) {
-                            let _ = adapter.send_message(&thread_channel, chunk).await;
+                        if directives.reply_to.is_some() {
+                            // reply_to directive present: clear placeholder and re-send as reply
+                            // so the directive has consistent semantics regardless of streaming mode.
+                            let _ = adapter.edit_message(&msg, "…").await;
+                            let _ = adapter.edit_message(&msg, &chunks.first().cloned().unwrap_or_default()).await;
+                            // Note: we can't make the placeholder a reply retroactively,
+                            // so send the real content as a new reply message and blank the placeholder.
+                            let _ = adapter.edit_message(&msg, "\u{200b}").await; // zero-width space (effectively hidden)
+                            let mut first = true;
+                            for chunk in &chunks {
+                                if first {
+                                    let _ = adapter.send_message_with_reply(
+                                        &thread_channel,
+                                        chunk,
+                                        directives.reply_to.as_ref().unwrap(),
+                                    ).await;
+                                } else {
+                                    let _ = adapter.send_message(&thread_channel, chunk).await;
+                                }
+                                first = false;
+                            }
+                        } else {
+                            // Normal streaming: edit first chunk into placeholder, send rest
+                            if let Some(first) = chunks.first() {
+                                let _ = adapter.edit_message(&msg, first).await;
+                            }
+                            for chunk in chunks.iter().skip(1) {
+                                let _ = adapter.send_message(&thread_channel, chunk).await;
+                            }
                         }
                     } else {
                         // Send-once: all chunks as new messages

@@ -1155,4 +1155,40 @@ mod directive_tests {
         assert_eq!(directives.reply_to, Some("123".to_string()));
         assert_eq!(content, "First line\nSecond line\nThird line");
     }
+
+    #[test]
+    fn parse_reply_to_no_space_before_content() {
+        // No space between ]] and content
+        let input = "[[reply_to:1502724086474870926]]收到";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, Some("1502724086474870926".to_string()));
+        assert_eq!(content, "收到");
+    }
+
+    #[test]
+    fn parse_reply_to_inline_with_mention() {
+        // Real-world case: directive followed by Discord mention
+        let input = "[[reply_to:1502724086474870926]]  <@1490365068863606784> 我 standby";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, Some("1502724086474870926".to_string()));
+        assert_eq!(content, "<@1490365068863606784> 我 standby");
+    }
+
+    #[test]
+    fn parse_reply_to_inline_only_spaces() {
+        // Trailing spaces only — no real content, should be empty
+        let input = "[[reply_to:123]]   ";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, Some("123".to_string()));
+        assert_eq!(content, "");
+    }
+
+    #[test]
+    fn parse_reply_to_with_brackets_in_content() {
+        // Content after ]] contains brackets — should not confuse parser
+        let input = "[[reply_to:456]]  看看 [[這個]] 怎麼樣";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, Some("456".to_string()));
+        assert_eq!(content, "看看 [[這個]] 怎麼樣");
+    }
 }

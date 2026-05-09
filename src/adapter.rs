@@ -210,9 +210,9 @@ pub trait ChatAdapter: Send + Sync + 'static {
     }
 
     /// Delete a message. Used to remove streaming placeholders when reply_to is set.
-    /// Default: no-op (platforms that don't support delete just ignore).
-    async fn delete_message(&self, _msg: &MessageRef) -> Result<()> {
-        Ok(())
+    /// Default: edits to zero-width space (fallback for platforms without delete support).
+    async fn delete_message(&self, msg: &MessageRef) -> Result<()> {
+        self.edit_message(msg, "\u{200b}").await
     }
 
     /// Whether this adapter should use streaming edit (true) or send-once (false).

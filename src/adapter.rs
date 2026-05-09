@@ -11,6 +11,63 @@ use crate::format;
 use crate::markdown::{self, TableMode};
 use crate::reactions::StatusReactionController;
 
+// --- Output directive parsing ---
+
+/// Parsed directives from agent output header block.
+/// Consecutive `[[key:value]]` lines at the start of output are directives.
+#[derive(Default, Debug)]
+pub struct OutputDirectives {
+    /// Message ID to reply to (Discord: message_reference)
+    pub reply_to: Option<String>,
+}
+
+/// Parse `[[key:value]]` directives from the beginning of agent output.
+/// Returns parsed directives and the remaining content (directives stripped).
+pub fn parse_output_directives(content: &str) -> (OutputDirectives, String) {
+    let mut directives = OutputDirectives::default();
+    let mut content_start = 0;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(inner) = trimmed.strip_prefix("[[").and_then(|s| s.strip_suffix("]]")) {
+            if let Some((key, value)) = inner.split_once(':') {
+                match key.trim() {
+                    "reply_to" => {
+                        let v = value.trim();
+                        // Validate: non-empty, reasonable length, no whitespace/control chars
+                        if !v.is_empty() && v.len() <= 64 && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_') {
+                            directives.reply_to = Some(v.to_string());
+                        }
+                    }
+                    _ => {
+                        tracing::debug!(key = key.trim(), "unknown output directive ignored");
+                    }
+                }
+                // Advance past this line + its line ending (handles both \n and \r\n)
+                content_start += line.len();
+                if content.as_bytes().get(content_start) == Some(&b'\r') {
+                    content_start += 1;
+                }
+                if content.as_bytes().get(content_start) == Some(&b'\n') {
+                    content_start += 1;
+                }
+            } else {
+                // [[X]] without colon — not a directive, stop parsing
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
+    let remaining = if content_start < content.len() {
+        &content[content_start..]
+    } else {
+        ""
+    };
+    (directives, remaining.to_string())
+}
+
 // --- Platform-agnostic types ---
 
 /// Identifies a channel or thread across platforms.
@@ -106,6 +163,10 @@ pub struct SenderContext {
     /// breakage). If future additions require breaking changes, bump to v1.1+.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<String>,
+    /// Platform message ID. Agents can use this to reply to a specific message
+    /// via the `[[reply_to:<message_id>]]` output directive.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
 }
 
 // --- ChatAdapter trait ---
@@ -139,6 +200,24 @@ pub trait ChatAdapter: Send + Sync + 'static {
     /// Default: unsupported (send-once only).
     async fn edit_message(&self, _msg: &MessageRef, _content: &str) -> Result<()> {
         Err(anyhow::anyhow!("edit_message not supported"))
+    }
+
+    /// Send a message as a reply to a specific message (Discord: message_reference).
+    /// Default: falls back to plain send_message (ignores reply_to).
+    async fn send_message_with_reply(
+        &self,
+        channel: &ChannelRef,
+        content: &str,
+        reply_to_message_id: &str,
+    ) -> Result<MessageRef> {
+        let _ = reply_to_message_id; // unused in default impl
+        self.send_message(channel, content).await
+    }
+
+    /// Delete a message. Used to remove streaming placeholders when reply_to is set.
+    /// Default: edits to zero-width space (fallback for platforms without delete support).
+    async fn delete_message(&self, msg: &MessageRef) -> Result<()> {
+        self.edit_message(msg, "\u{200b}").await
     }
 
     /// Whether this adapter should use streaming edit (true) or send-once (false).
@@ -536,6 +615,12 @@ impl AdapterRouter {
                     // Stop the edit loop
                     drop(buf_tx);
 
+                    // Parse output directives from raw text_buf BEFORE compose_display.
+                    // Directives are agent meta-layer, not content — must be stripped
+                    // before tool lines are composed into the display output.
+                    let (directives, stripped_text) = parse_output_directives(&text_buf);
+                    let text_buf = stripped_text;
+
                     // Build final content
                     let final_content =
                         compose_display(&tool_lines, &text_buf, false, tool_display);
@@ -554,17 +639,61 @@ impl AdapterRouter {
                     let final_content = markdown::convert_tables(&final_content, table_mode);
                     let chunks = format::split_message(&final_content, message_limit);
                     if let Some(msg) = placeholder_msg {
-                        // Streaming: edit first chunk into placeholder, send rest as new messages
-                        if let Some(first) = chunks.first() {
-                            let _ = adapter.edit_message(&msg, first).await;
-                        }
-                        for chunk in chunks.iter().skip(1) {
-                            let _ = adapter.send_message(&thread_channel, chunk).await;
+                        if let Some(ref reply_id) = directives.reply_to {
+                            // reply_to directive: send reply first, then delete placeholder.
+                            // Only delete if send succeeds — preserves placeholder on failure.
+                            let mut send_ok = false;
+                            let mut first = true;
+                            for chunk in &chunks {
+                                if first {
+                                    match adapter.send_message_with_reply(
+                                        &thread_channel,
+                                        chunk,
+                                        reply_id,
+                                    ).await {
+                                        Ok(_) => { send_ok = true; }
+                                        Err(e) => {
+                                            tracing::warn!(error = ?e, "reply_to send failed; preserving placeholder");
+                                        }
+                                    }
+                                } else {
+                                    let _ = adapter.send_message(&thread_channel, chunk).await;
+                                }
+                                first = false;
+                            }
+                            if send_ok {
+                                if let Err(e) = adapter.delete_message(&msg).await {
+                                    tracing::warn!(error = ?e, "delete placeholder failed; placeholder will remain visible");
+                                }
+                            }
+                        } else {
+                            // Normal streaming: edit first chunk into placeholder, send rest
+                            if let Some(first) = chunks.first() {
+                                let _ = adapter.edit_message(&msg, first).await;
+                            }
+                            for chunk in chunks.iter().skip(1) {
+                                let _ = adapter.send_message(&thread_channel, chunk).await;
+                            }
                         }
                     } else {
                         // Send-once: all chunks as new messages
+                        // First chunk uses reply_to directive if present
+                        let mut first = true;
                         for chunk in &chunks {
-                            let _ = adapter.send_message(&thread_channel, chunk).await;
+                            if first {
+                                if let Some(ref reply_id) = directives.reply_to {
+                                    let _ = adapter.send_message_with_reply(
+                                        &thread_channel,
+                                        chunk,
+                                        reply_id,
+                                    ).await;
+                                } else {
+                                    let _ = adapter.send_message(&thread_channel, chunk).await;
+                                }
+                            } else {
+                                let _ = adapter.send_message(&thread_channel, chunk).await;
+                            }
+                            first = false;
                         }
                     }
 
@@ -877,5 +1006,108 @@ mod tests {
         )];
         let out = compose_display(&tools, "response text", false, ToolDisplay::None);
         assert_eq!(out, "response text");
+    }
+}
+
+#[cfg(test)]
+mod directive_tests {
+    use super::parse_output_directives;
+
+    #[test]
+    fn parse_reply_to_directive() {
+        let input = "[[reply_to:1502606076451885136]]\nHello world";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, Some("1502606076451885136".to_string()));
+        assert_eq!(content, "Hello world");
+    }
+
+    #[test]
+    fn parse_no_directives() {
+        let input = "Just plain content\nwith multiple lines";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, None);
+        assert_eq!(content, input);
+    }
+
+    #[test]
+    fn parse_multiple_directives() {
+        let input = "[[reply_to:123456]]\n[[unknown_key:value]]\nContent here";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, Some("123456".to_string()));
+        assert_eq!(content, "Content here");
+    }
+
+    #[test]
+    fn parse_invalid_reply_to_rejects_whitespace() {
+        let input = "[[reply_to:has spaces]]\nContent";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, None);
+        assert_eq!(content, "Content");
+    }
+
+    #[test]
+    fn parse_slack_ts_format_accepted() {
+        let input = "[[reply_to:1234567890.123456]]\nContent";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, Some("1234567890.123456".to_string()));
+        assert_eq!(content, "Content");
+    }
+
+    #[test]
+    fn parse_empty_reply_to() {
+        let input = "[[reply_to:]]\nContent";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, None);
+        assert_eq!(content, "Content");
+    }
+
+    #[test]
+    fn parse_crlf_line_endings() {
+        let input = "[[reply_to:999]]\r\nContent with CRLF";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, Some("999".to_string()));
+        assert_eq!(content, "Content with CRLF");
+    }
+
+    #[test]
+    fn parse_directive_only_no_content() {
+        let input = "[[reply_to:123]]";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, Some("123".to_string()));
+        assert_eq!(content, "");
+    }
+
+    #[test]
+    fn parse_non_directive_line_stops_parsing() {
+        let input = "Normal first line\n[[reply_to:123]]\nMore content";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, None);
+        assert_eq!(content, input);
+    }
+
+    #[test]
+    fn parse_duplicate_reply_to_last_wins() {
+        let input = "[[reply_to:111]]\n[[reply_to:222]]\nContent";
+        let (directives, content) = parse_output_directives(input);
+        // Last value wins
+        assert_eq!(directives.reply_to, Some("222".to_string()));
+        assert_eq!(content, "Content");
+    }
+
+    #[test]
+    fn parse_crlf_multiple_directives() {
+        let input = "[[reply_to:456]]\r\n[[unknown:x]]\r\nContent after CRLF";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, Some("456".to_string()));
+        assert_eq!(content, "Content after CRLF");
+    }
+
+    #[test]
+    fn parse_bracket_without_colon_preserved() {
+        // [[Note]] has no colon — not a directive, preserved as content
+        let input = "[[Summary]]\nThis is body text";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, None);
+        assert_eq!(content, input);
     }
 }

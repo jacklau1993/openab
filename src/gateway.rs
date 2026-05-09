@@ -642,6 +642,7 @@ pub async fn run_gateway_adapter(
                                         } else {
                                             event.timestamp.clone()
                                         }),
+                                        message_id: if event.message_id.is_empty() { None } else { Some(event.message_id.clone()) },
                                     };
                                     let sender_json = serde_json::to_string(&sender_ctx)
                                         .unwrap_or_default();

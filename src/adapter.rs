@@ -626,13 +626,8 @@ impl AdapterRouter {
                     let chunks = format::split_message(&final_content, message_limit);
                     if let Some(msg) = placeholder_msg {
                         if directives.reply_to.is_some() {
-                            // reply_to directive present: clear placeholder and re-send as reply
-                            // so the directive has consistent semantics regardless of streaming mode.
-                            let _ = adapter.edit_message(&msg, "…").await;
-                            let _ = adapter.edit_message(&msg, &chunks.first().cloned().unwrap_or_default()).await;
-                            // Note: we can't make the placeholder a reply retroactively,
-                            // so send the real content as a new reply message and blank the placeholder.
-                            let _ = adapter.edit_message(&msg, "\u{200b}").await; // zero-width space (effectively hidden)
+                            // reply_to directive present: hide placeholder and re-send as reply
+                            let _ = adapter.edit_message(&msg, "\u{200b}").await;
                             let mut first = true;
                             for chunk in &chunks {
                                 if first {

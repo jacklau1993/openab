@@ -34,8 +34,8 @@ pub fn parse_output_directives(content: &str) -> (OutputDirectives, String) {
                 match key.trim() {
                     "reply_to" => {
                         let v = value.trim();
-                        // Validate: must be numeric snowflake
-                        if v.chars().all(|c| c.is_ascii_digit()) && !v.is_empty() {
+                        // Validate: non-empty, reasonable length, no whitespace/control chars
+                        if !v.is_empty() && v.len() <= 64 && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_') {
                             directives.reply_to = Some(v.to_string());
                         }
                     }
@@ -1009,10 +1009,18 @@ mod directive_tests {
     }
 
     #[test]
-    fn parse_invalid_reply_to_non_numeric() {
-        let input = "[[reply_to:not-a-number]]\nContent";
+    fn parse_invalid_reply_to_rejects_whitespace() {
+        let input = "[[reply_to:has spaces]]\nContent";
         let (directives, content) = parse_output_directives(input);
         assert_eq!(directives.reply_to, None);
+        assert_eq!(content, "Content");
+    }
+
+    #[test]
+    fn parse_slack_ts_format_accepted() {
+        let input = "[[reply_to:1234567890.123456]]\nContent";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, Some("1234567890.123456".to_string()));
         assert_eq!(content, "Content");
     }
 

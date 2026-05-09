@@ -43,14 +43,17 @@ pub fn parse_output_directives(content: &str) -> (OutputDirectives, String) {
                         tracing::debug!(key = key.trim(), "unknown output directive ignored");
                     }
                 }
-            }
-            // Advance past this line + its line ending (handles both \n and \r\n)
-            content_start += line.len();
-            if content.as_bytes().get(content_start) == Some(&b'\r') {
-                content_start += 1;
-            }
-            if content.as_bytes().get(content_start) == Some(&b'\n') {
-                content_start += 1;
+                // Advance past this line + its line ending (handles both \n and \r\n)
+                content_start += line.len();
+                if content.as_bytes().get(content_start) == Some(&b'\r') {
+                    content_start += 1;
+                }
+                if content.as_bytes().get(content_start) == Some(&b'\n') {
+                    content_start += 1;
+                }
+            } else {
+                // [[X]] without colon — not a directive, stop parsing
+                break;
             }
         } else {
             break;
@@ -1092,5 +1095,14 @@ mod directive_tests {
         let (directives, content) = parse_output_directives(input);
         assert_eq!(directives.reply_to, Some("456".to_string()));
         assert_eq!(content, "Content after CRLF");
+    }
+
+    #[test]
+    fn parse_bracket_without_colon_preserved() {
+        // [[Note]] has no colon — not a directive, preserved as content
+        let input = "[[Summary]]\nThis is body text";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, None);
+        assert_eq!(content, input);
     }
 }

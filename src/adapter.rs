@@ -26,33 +26,55 @@ pub struct OutputDirectives {
 pub fn parse_output_directives(content: &str) -> (OutputDirectives, String) {
     let mut directives = OutputDirectives::default();
     let mut content_start = 0;
+    let mut trailing_content: Option<&str> = None;
 
     for line in content.lines() {
         let trimmed = line.trim();
-        if let Some(inner) = trimmed.strip_prefix("[[").and_then(|s| s.strip_suffix("]]")) {
-            if let Some((key, value)) = inner.split_once(':') {
-                match key.trim() {
-                    "reply_to" => {
-                        let v = value.trim();
-                        // Validate: non-empty, reasonable length, no whitespace/control chars
-                        if !v.is_empty() && v.len() <= 64 && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_') {
-                            directives.reply_to = Some(v.to_string());
+        // Try to match [[key:value]] at the start of the line (lenient: allows trailing content)
+        if let Some(after_open) = trimmed.strip_prefix("[[") {
+            if let Some(close_pos) = after_open.find("]]") {
+                let inner = &after_open[..close_pos];
+                if let Some((key, value)) = inner.split_once(':') {
+                    match key.trim() {
+                        "reply_to" => {
+                            let v = value.trim();
+                            // Validate: non-empty, reasonable length, no whitespace/control chars
+                            if !v.is_empty() && v.len() <= 64 && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_') {
+                                directives.reply_to = Some(v.to_string());
+                            }
+                        }
+                        _ => {
+                            tracing::debug!(key = key.trim(), "unknown output directive ignored");
                         }
                     }
-                    _ => {
-                        tracing::debug!(key = key.trim(), "unknown output directive ignored");
+                    // Check for trailing content after ]]
+                    let remainder = after_open[close_pos + 2..].trim();
+                    if !remainder.is_empty() {
+                        trailing_content = Some(remainder);
+                        // Advance past this line
+                        content_start += line.len();
+                        if content.as_bytes().get(content_start) == Some(&b'\r') {
+                            content_start += 1;
+                        }
+                        if content.as_bytes().get(content_start) == Some(&b'\n') {
+                            content_start += 1;
+                        }
+                        break; // Trailing content ends directive header
                     }
-                }
-                // Advance past this line + its line ending (handles both \n and \r\n)
-                content_start += line.len();
-                if content.as_bytes().get(content_start) == Some(&b'\r') {
-                    content_start += 1;
-                }
-                if content.as_bytes().get(content_start) == Some(&b'\n') {
-                    content_start += 1;
+                    // Advance past this line + its line ending (handles both \n and \r\n)
+                    content_start += line.len();
+                    if content.as_bytes().get(content_start) == Some(&b'\r') {
+                        content_start += 1;
+                    }
+                    if content.as_bytes().get(content_start) == Some(&b'\n') {
+                        content_start += 1;
+                    }
+                } else {
+                    // [[X]] without colon — not a directive, stop parsing
+                    break;
                 }
             } else {
-                // [[X]] without colon — not a directive, stop parsing
+                // No closing ]] found — not a directive, stop parsing
                 break;
             }
         } else {
@@ -60,12 +82,18 @@ pub fn parse_output_directives(content: &str) -> (OutputDirectives, String) {
         }
     }
 
-    let remaining = if content_start < content.len() {
-        &content[content_start..]
+    let remaining = if let Some(trailing) = trailing_content {
+        if content_start < content.len() {
+            format!("{}\n{}", trailing, &content[content_start..])
+        } else {
+            trailing.to_string()
+        }
+    } else if content_start < content.len() {
+        content[content_start..].to_string()
     } else {
-        ""
+        String::new()
     };
-    (directives, remaining.to_string())
+    (directives, remaining)
 }
 
 // --- Platform-agnostic types ---
@@ -1109,5 +1137,22 @@ mod directive_tests {
         let (directives, content) = parse_output_directives(input);
         assert_eq!(directives.reply_to, None);
         assert_eq!(content, input);
+    }
+
+    #[test]
+    fn parse_reply_to_with_inline_content() {
+        // Agent puts content on same line as directive — should still parse
+        let input = "[[reply_to:1502724086474870926]]  @超渡法師 我 standby";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, Some("1502724086474870926".to_string()));
+        assert_eq!(content, "@超渡法師 我 standby");
+    }
+
+    #[test]
+    fn parse_reply_to_inline_with_more_lines() {
+        let input = "[[reply_to:123]]  First line\nSecond line\nThird line";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, Some("123".to_string()));
+        assert_eq!(content, "First line\nSecond line\nThird line");
     }
 }

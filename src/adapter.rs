@@ -627,8 +627,7 @@ impl AdapterRouter {
                         final_content
                     };
 
-                    let final_content = markdown::convert_tables(&final_content, table_mode);
-                    // Parse output directives (e.g. [[reply_to:msg_id]]) from content header.
+                    // Parse output directives BEFORE markdown conversion (meta-layer first)
                     let (directives, stripped_content) = parse_output_directives(&final_content);
                     // Guard: if content is empty after stripping directives, use fallback
                     let final_content = if stripped_content.trim().is_empty() {
@@ -636,11 +635,12 @@ impl AdapterRouter {
                     } else {
                         stripped_content
                     };
+                    let final_content = markdown::convert_tables(&final_content, table_mode);
                     let chunks = format::split_message(&final_content, message_limit);
                     if let Some(msg) = placeholder_msg {
                         if let Some(ref reply_id) = directives.reply_to {
-                            // reply_to directive present: delete placeholder and re-send as reply
-                            let _ = adapter.delete_message(&msg).await;
+                            // reply_to directive: send reply first, then delete placeholder.
+                            // Order matters: if send fails, placeholder remains (no message loss).
                             let mut first = true;
                             for chunk in &chunks {
                                 if first {
@@ -654,6 +654,7 @@ impl AdapterRouter {
                                 }
                                 first = false;
                             }
+                            let _ = adapter.delete_message(&msg).await;
                         } else {
                             // Normal streaming: edit first chunk into placeholder, send rest
                             if let Some(first) = chunks.first() {

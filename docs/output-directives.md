@@ -31,7 +31,7 @@ Reply to a specific message by ID (Discord: `message_reference`).
 Here is my reply to that specific message.
 ```
 
-**Value**: Platform message ID. Format depends on the target adapter — Discord requires a numeric snowflake; Slack accepts `ts` (e.g. `1234567890.123456`). The directive parser validates only that the value is non-empty, ≤64 chars, and contains no whitespace; per-platform format validation happens in each adapter.
+**Value**: Platform message ID. Format depends on the target adapter — Discord requires a numeric snowflake; Slack accepts `ts` (e.g. `1234567890.123456`). The directive parser validates that the value is non-empty, ≤64 chars, and contains only ASCII alphanumeric characters plus `.`, `-`, `_`; per-platform format validation happens in each adapter.
 
 **Behavior**:
 - Discord: sends with `message_reference`, showing the native "replying to..." UI

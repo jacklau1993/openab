@@ -646,12 +646,15 @@ impl AdapterRouter {
                             let mut first = true;
                             for chunk in &chunks {
                                 if first {
-                                    if adapter.send_message_with_reply(
+                                    match adapter.send_message_with_reply(
                                         &thread_channel,
                                         chunk,
                                         reply_id,
-                                    ).await.is_ok() {
-                                        send_ok = true;
+                                    ).await {
+                                        Ok(_) => { send_ok = true; }
+                                        Err(e) => {
+                                            tracing::warn!(error = ?e, "reply_to send failed; preserving placeholder");
+                                        }
                                     }
                                 } else {
                                     let _ = adapter.send_message(&thread_channel, chunk).await;
@@ -659,7 +662,9 @@ impl AdapterRouter {
                                 first = false;
                             }
                             if send_ok {
-                                let _ = adapter.delete_message(&msg).await;
+                                if let Err(e) = adapter.delete_message(&msg).await {
+                                    tracing::warn!(error = ?e, "delete placeholder failed; placeholder will remain visible");
+                                }
                             }
                         } else {
                             // Normal streaming: edit first chunk into placeholder, send rest

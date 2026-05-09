@@ -94,8 +94,9 @@ impl ChatAdapter for DiscordAdapter {
                 channel: channel.clone(),
                 message_id: msg.id.to_string(),
             }),
-            Err(_) => {
+            Err(e) => {
                 // Fallback to plain send if reply fails (e.g. unknown message, cross-channel)
+                tracing::warn!(error = ?e, reply_to = reply_to_message_id, "reply_to failed, falling back to plain send");
                 self.send_message(channel, content).await
             }
         }

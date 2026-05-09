@@ -1047,4 +1047,21 @@ mod directive_tests {
         assert_eq!(directives.reply_to, None);
         assert_eq!(content, input);
     }
+
+    #[test]
+    fn parse_duplicate_reply_to_last_wins() {
+        let input = "[[reply_to:111]]\n[[reply_to:222]]\nContent";
+        let (directives, content) = parse_output_directives(input);
+        // Last value wins
+        assert_eq!(directives.reply_to, Some("222".to_string()));
+        assert_eq!(content, "Content");
+    }
+
+    #[test]
+    fn parse_crlf_multiple_directives() {
+        let input = "[[reply_to:456]]\r\n[[unknown:x]]\r\nContent after CRLF";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, Some("456".to_string()));
+        assert_eq!(content, "Content after CRLF");
+    }
 }

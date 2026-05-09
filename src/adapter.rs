@@ -638,7 +638,7 @@ impl AdapterRouter {
                     };
                     let chunks = format::split_message(&final_content, message_limit);
                     if let Some(msg) = placeholder_msg {
-                        if directives.reply_to.is_some() {
+                        if let Some(ref reply_id) = directives.reply_to {
                             // reply_to directive present: delete placeholder and re-send as reply
                             let _ = adapter.delete_message(&msg).await;
                             let mut first = true;
@@ -647,7 +647,7 @@ impl AdapterRouter {
                                     let _ = adapter.send_message_with_reply(
                                         &thread_channel,
                                         chunk,
-                                        directives.reply_to.as_ref().unwrap(),
+                                        reply_id,
                                     ).await;
                                 } else {
                                     let _ = adapter.send_message(&thread_channel, chunk).await;

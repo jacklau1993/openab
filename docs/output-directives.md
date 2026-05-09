@@ -14,9 +14,11 @@ Actual message content starts here...
 
 Rules:
 - Consecutive `[[key:value]]` lines at the start of output = directive header block
-- First line that doesn't match `[[...]]` = content begins
+- First line that doesn't match `[[key:value]]` (with colon) = content begins
+- `[[X]]` without colon is NOT a directive — stops parsing, preserved as content
 - Directives are stripped from the final message (never visible to users)
-- Unknown keys are silently ignored (forward compatible)
+- Unknown keys are silently ignored (forward compatible, logged at debug level)
+- If the same key appears multiple times, the last value wins
 
 ## Available Directives
 
@@ -29,7 +31,7 @@ Reply to a specific message by ID (Discord: `message_reference`).
 Here is my reply to that specific message.
 ```
 
-**Value**: Platform message ID (Discord snowflake — numeric only)
+**Value**: Platform message ID. Format depends on the target adapter — Discord requires a numeric snowflake; Slack accepts `ts` (e.g. `1234567890.123456`). The directive parser validates only that the value is non-empty, ≤64 chars, and contains no whitespace; per-platform format validation happens in each adapter.
 
 **Behavior**:
 - Discord: sends with `message_reference`, showing the native "replying to..." UI

@@ -39,7 +39,9 @@ pub fn parse_output_directives(content: &str) -> (OutputDirectives, String) {
                             directives.reply_to = Some(v.to_string());
                         }
                     }
-                    _ => {} // Unknown directives silently ignored (forward compatible)
+                    _ => {
+                        tracing::debug!(key = key.trim(), "unknown output directive ignored");
+                    }
                 }
             }
             // Advance past this line + its line ending (handles both \n and \r\n)

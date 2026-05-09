@@ -1142,10 +1142,10 @@ mod directive_tests {
     #[test]
     fn parse_reply_to_with_inline_content() {
         // Agent puts content on same line as directive — should still parse
-        let input = "[[reply_to:1502724086474870926]]  @超渡法師 我 standby";
+        let input = "[[reply_to:1502724086474870926]]  @BOT I'm on standby";
         let (directives, content) = parse_output_directives(input);
         assert_eq!(directives.reply_to, Some("1502724086474870926".to_string()));
-        assert_eq!(content, "@超渡法師 我 standby");
+        assert_eq!(content, "@BOT I'm on standby");
     }
 
     #[test]

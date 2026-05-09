@@ -102,6 +102,13 @@ impl ChatAdapter for DiscordAdapter {
         }
     }
 
+    async fn delete_message(&self, msg: &MessageRef) -> anyhow::Result<()> {
+        let ch_id: u64 = Self::resolve_channel(&msg.channel).parse()?;
+        let msg_id: u64 = msg.message_id.parse()?;
+        self.http.delete_message(ChannelId::new(ch_id), MessageId::new(msg_id), None).await?;
+        Ok(())
+    }
+
     async fn edit_message(&self, msg: &MessageRef, content: &str) -> anyhow::Result<()> {
         let ch_id: u64 = Self::resolve_channel(&msg.channel).parse()?;
         let msg_id: u64 = msg.message_id.parse()?;

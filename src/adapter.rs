@@ -209,6 +209,12 @@ pub trait ChatAdapter: Send + Sync + 'static {
         self.send_message(channel, content).await
     }
 
+    /// Delete a message. Used to remove streaming placeholders when reply_to is set.
+    /// Default: no-op (platforms that don't support delete just ignore).
+    async fn delete_message(&self, _msg: &MessageRef) -> Result<()> {
+        Ok(())
+    }
+
     /// Whether this adapter should use streaming edit (true) or send-once (false).
     /// `other_bot_present` indicates if another bot has posted in the current thread.
     /// Streaming should be disabled in multi-bot threads to avoid edit interference.
@@ -631,8 +637,8 @@ impl AdapterRouter {
                     let chunks = format::split_message(&final_content, message_limit);
                     if let Some(msg) = placeholder_msg {
                         if directives.reply_to.is_some() {
-                            // reply_to directive present: hide placeholder and re-send as reply
-                            let _ = adapter.edit_message(&msg, "\u{200b}").await;
+                            // reply_to directive present: delete placeholder and re-send as reply
+                            let _ = adapter.delete_message(&msg).await;
                             let mut first = true;
                             for chunk in &chunks {
                                 if first {

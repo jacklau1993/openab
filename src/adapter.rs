@@ -666,12 +666,16 @@ impl AdapterRouter {
                         // First chunk uses reply_to directive if present
                         let mut first = true;
                         for chunk in &chunks {
-                            if first && directives.reply_to.is_some() {
-                                let _ = adapter.send_message_with_reply(
-                                    &thread_channel,
-                                    chunk,
-                                    directives.reply_to.as_ref().unwrap(),
-                                ).await;
+                            if first {
+                                if let Some(ref reply_id) = directives.reply_to {
+                                    let _ = adapter.send_message_with_reply(
+                                        &thread_channel,
+                                        chunk,
+                                        reply_id,
+                                    ).await;
+                                } else {
+                                    let _ = adapter.send_message(&thread_channel, chunk).await;
+                                }
                             } else {
                                 let _ = adapter.send_message(&thread_channel, chunk).await;
                             }

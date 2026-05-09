@@ -1360,6 +1360,7 @@ fn video_attachment_block(
 /// Note: `ChannelRef.channel_id` uses the *opposite* convention — it holds
 /// the thread's channel ID for routing (Discord API sends to thread by its
 /// channel ID). See `ChannelRef` doc comments for details.
+#[allow(clippy::too_many_arguments)]
 fn build_sender_context(
     sender_id: &str,
     sender_name: &str,

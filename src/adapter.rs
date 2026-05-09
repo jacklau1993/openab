@@ -984,3 +984,72 @@ mod tests {
         assert_eq!(out, "response text");
     }
 }
+
+#[cfg(test)]
+mod directive_tests {
+    use super::parse_output_directives;
+
+    #[test]
+    fn parse_reply_to_directive() {
+        let input = "[[reply_to:1502606076451885136]]\nHello world";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, Some("1502606076451885136".to_string()));
+        assert_eq!(content, "Hello world");
+    }
+
+    #[test]
+    fn parse_no_directives() {
+        let input = "Just plain content\nwith multiple lines";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, None);
+        assert_eq!(content, input);
+    }
+
+    #[test]
+    fn parse_multiple_directives() {
+        let input = "[[reply_to:123456]]\n[[unknown_key:value]]\nContent here";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, Some("123456".to_string()));
+        assert_eq!(content, "Content here");
+    }
+
+    #[test]
+    fn parse_invalid_reply_to_non_numeric() {
+        let input = "[[reply_to:not-a-number]]\nContent";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, None);
+        assert_eq!(content, "Content");
+    }
+
+    #[test]
+    fn parse_empty_reply_to() {
+        let input = "[[reply_to:]]\nContent";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, None);
+        assert_eq!(content, "Content");
+    }
+
+    #[test]
+    fn parse_crlf_line_endings() {
+        let input = "[[reply_to:999]]\r\nContent with CRLF";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, Some("999".to_string()));
+        assert_eq!(content, "Content with CRLF");
+    }
+
+    #[test]
+    fn parse_directive_only_no_content() {
+        let input = "[[reply_to:123]]";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, Some("123".to_string()));
+        assert_eq!(content, "");
+    }
+
+    #[test]
+    fn parse_non_directive_line_stops_parsing() {
+        let input = "Normal first line\n[[reply_to:123]]\nMore content";
+        let (directives, content) = parse_output_directives(input);
+        assert_eq!(directives.reply_to, None);
+        assert_eq!(content, input);
+    }
+}

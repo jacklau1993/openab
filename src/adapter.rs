@@ -612,6 +612,12 @@ impl AdapterRouter {
                     // Stop the edit loop
                     drop(buf_tx);
 
+                    // Parse output directives from raw text_buf BEFORE compose_display.
+                    // Directives are agent meta-layer, not content — must be stripped
+                    // before tool lines are composed into the display output.
+                    let (directives, stripped_text) = parse_output_directives(&text_buf);
+                    let text_buf = stripped_text;
+
                     // Build final content
                     let final_content =
                         compose_display(&tool_lines, &text_buf, false, tool_display);
@@ -627,34 +633,31 @@ impl AdapterRouter {
                         final_content
                     };
 
-                    // Parse output directives BEFORE markdown conversion (meta-layer first)
-                    let (directives, stripped_content) = parse_output_directives(&final_content);
-                    // Guard: if content is empty after stripping directives, use fallback
-                    let final_content = if stripped_content.trim().is_empty() {
-                        "_(no response)_".to_string()
-                    } else {
-                        stripped_content
-                    };
                     let final_content = markdown::convert_tables(&final_content, table_mode);
                     let chunks = format::split_message(&final_content, message_limit);
                     if let Some(msg) = placeholder_msg {
                         if let Some(ref reply_id) = directives.reply_to {
                             // reply_to directive: send reply first, then delete placeholder.
-                            // Order matters: if send fails, placeholder remains (no message loss).
+                            // Only delete if send succeeds — preserves placeholder on failure.
+                            let mut send_ok = false;
                             let mut first = true;
                             for chunk in &chunks {
                                 if first {
-                                    let _ = adapter.send_message_with_reply(
+                                    if adapter.send_message_with_reply(
                                         &thread_channel,
                                         chunk,
                                         reply_id,
-                                    ).await;
+                                    ).await.is_ok() {
+                                        send_ok = true;
+                                    }
                                 } else {
                                     let _ = adapter.send_message(&thread_channel, chunk).await;
                                 }
                                 first = false;
                             }
-                            let _ = adapter.delete_message(&msg).await;
+                            if send_ok {
+                                let _ = adapter.delete_message(&msg).await;
+                            }
                         } else {
                             // Normal streaming: edit first chunk into placeholder, send rest
                             if let Some(first) = chunks.first() {

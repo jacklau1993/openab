@@ -399,6 +399,7 @@ async fn fire_cronjob(
             .or(Some(reply_channel.channel_id.clone())),
         is_bot: true,
         timestamp: Some(Utc::now().to_rfc3339()),
+        message_id: None, // cron jobs don't originate from a message
     };
     let sender_json = match serde_json::to_string(&sender) {
         Ok(j) => j,

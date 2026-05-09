@@ -1063,6 +1063,7 @@ async fn handle_message(
         thread_id: thread_ts.clone(),
         is_bot: is_bot_msg,
         timestamp: Some(crate::timestamp::slack_ts_to_iso8601(&ts)),
+        message_id: Some(ts.clone()),
     };
 
     let trigger_msg = MessageRef {

@@ -11,6 +11,51 @@ use crate::format;
 use crate::markdown::{self, TableMode};
 use crate::reactions::StatusReactionController;
 
+// --- Output directive parsing ---
+
+/// Parsed directives from agent output header block.
+/// Consecutive `[[key:value]]` lines at the start of output are directives.
+#[derive(Default, Debug)]
+pub struct OutputDirectives {
+    /// Message ID to reply to (Discord: message_reference)
+    pub reply_to: Option<String>,
+}
+
+/// Parse `[[key:value]]` directives from the beginning of agent output.
+/// Returns parsed directives and the remaining content (directives stripped).
+pub fn parse_output_directives(content: &str) -> (OutputDirectives, String) {
+    let mut directives = OutputDirectives::default();
+    let mut content_start = 0;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if let Some(inner) = trimmed.strip_prefix("[[").and_then(|s| s.strip_suffix("]]")) {
+            if let Some((key, value)) = inner.split_once(':') {
+                match key.trim() {
+                    "reply_to" => {
+                        let v = value.trim();
+                        // Validate: must be numeric snowflake
+                        if v.chars().all(|c| c.is_ascii_digit()) && !v.is_empty() {
+                            directives.reply_to = Some(v.to_string());
+                        }
+                    }
+                    _ => {} // Unknown directives silently ignored (forward compatible)
+                }
+            }
+            content_start += line.len() + 1; // +1 for newline
+        } else {
+            break;
+        }
+    }
+
+    let remaining = if content_start < content.len() {
+        &content[content_start..]
+    } else {
+        ""
+    };
+    (directives, remaining.to_string())
+}
+
 // --- Platform-agnostic types ---
 
 /// Identifies a channel or thread across platforms.
@@ -106,6 +151,10 @@ pub struct SenderContext {
     /// breakage). If future additions require breaking changes, bump to v1.1+.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp: Option<String>,
+    /// Platform message ID. Agents can use this to reply to a specific message
+    /// via the `[[reply_to:<message_id>]]` output directive.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
 }
 
 // --- ChatAdapter trait ---
@@ -139,6 +188,18 @@ pub trait ChatAdapter: Send + Sync + 'static {
     /// Default: unsupported (send-once only).
     async fn edit_message(&self, _msg: &MessageRef, _content: &str) -> Result<()> {
         Err(anyhow::anyhow!("edit_message not supported"))
+    }
+
+    /// Send a message as a reply to a specific message (Discord: message_reference).
+    /// Default: falls back to plain send_message (ignores reply_to).
+    async fn send_message_with_reply(
+        &self,
+        channel: &ChannelRef,
+        content: &str,
+        reply_to_message_id: &str,
+    ) -> Result<MessageRef> {
+        let _ = reply_to_message_id; // unused in default impl
+        self.send_message(channel, content).await
     }
 
     /// Whether this adapter should use streaming edit (true) or send-once (false).
@@ -552,6 +613,9 @@ impl AdapterRouter {
                     };
 
                     let final_content = markdown::convert_tables(&final_content, table_mode);
+                    // Parse output directives (e.g. [[reply_to:msg_id]]) from content header
+                    let (directives, stripped_content) = parse_output_directives(&final_content);
+                    let final_content = stripped_content;
                     let chunks = format::split_message(&final_content, message_limit);
                     if let Some(msg) = placeholder_msg {
                         // Streaming: edit first chunk into placeholder, send rest as new messages
@@ -563,8 +627,19 @@ impl AdapterRouter {
                         }
                     } else {
                         // Send-once: all chunks as new messages
+                        // First chunk uses reply_to directive if present
+                        let mut first = true;
                         for chunk in &chunks {
-                            let _ = adapter.send_message(&thread_channel, chunk).await;
+                            if first && directives.reply_to.is_some() {
+                                let _ = adapter.send_message_with_reply(
+                                    &thread_channel,
+                                    chunk,
+                                    directives.reply_to.as_ref().unwrap(),
+                                ).await;
+                            } else {
+                                let _ = adapter.send_message(&thread_channel, chunk).await;
+                            }
+                            first = false;
                         }
                     }
 

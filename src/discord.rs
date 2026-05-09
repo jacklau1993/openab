@@ -74,6 +74,28 @@ impl ChatAdapter for DiscordAdapter {
         })
     }
 
+    async fn send_message_with_reply(
+        &self,
+        channel: &ChannelRef,
+        content: &str,
+        reply_to_message_id: &str,
+    ) -> anyhow::Result<MessageRef> {
+        let ch_id: u64 = Self::resolve_channel(channel).parse()?;
+        let msg_id: u64 = reply_to_message_id.parse().unwrap_or(0);
+        if msg_id == 0 {
+            // Invalid message ID, fall back to plain send
+            return self.send_message(channel, content).await;
+        }
+        let builder = serenity::builder::CreateMessage::new()
+            .content(content)
+            .reference_message((ChannelId::new(ch_id), MessageId::new(msg_id)));
+        let msg = ChannelId::new(ch_id).send_message(&self.http, builder).await?;
+        Ok(MessageRef {
+            channel: channel.clone(),
+            message_id: msg.id.to_string(),
+        })
+    }
+
     async fn edit_message(&self, msg: &MessageRef, content: &str) -> anyhow::Result<()> {
         let ch_id: u64 = Self::resolve_channel(&msg.channel).parse()?;
         let msg_id: u64 = msg.message_id.parse()?;
@@ -594,6 +616,7 @@ impl EventHandler for Handler {
             thread_parent_id.as_deref(),
             msg.author.bot,
             &msg.timestamp.to_rfc3339().unwrap_or_default(),
+            &msg.id.to_string(),
         );
 
         // Build extra content blocks from attachments (audio -> STT, text -> inline,
@@ -1332,6 +1355,7 @@ fn build_sender_context(
     thread_parent_id: Option<&str>,
     is_bot: bool,
     timestamp: &str,
+    message_id: &str,
 ) -> SenderContext {
     SenderContext {
         schema: "openab.sender.v1".into(),
@@ -1343,6 +1367,7 @@ fn build_sender_context(
         thread_id: thread_parent_id.map(|_| msg_channel_id.to_string()),
         is_bot,
         timestamp: Some(timestamp.to_string()),
+        message_id: Some(message_id.to_string()),
     }
 }
 
@@ -1718,6 +1743,7 @@ mod tests {
             Some("parent_ch"),
             false,
             "2026-05-01T00:00:00Z",
+            "msg123",
         );
         assert_eq!(ctx.channel_id, "parent_ch");
         assert_eq!(ctx.thread_id, Some("thread_ch".to_string()));
@@ -1737,6 +1763,7 @@ mod tests {
             None,
             false,
             "2026-05-01T00:00:00Z",
+            "msg456",
         );
         assert_eq!(ctx.channel_id, "main_ch");
         assert_eq!(ctx.thread_id, None);
@@ -1753,6 +1780,7 @@ mod tests {
             Some("parent"),
             true,
             "2026-05-01T00:00:00Z",
+            "msg789",
         );
         assert!(ctx.is_bot);
         assert_eq!(ctx.channel_id, "parent");

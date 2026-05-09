@@ -72,10 +72,3 @@ This creates clear visual conversation threads within a Discord thread — essen
 | **OAB** | `[[reply_to:message_id]]` directive | ✅ Agent chooses any message |
 
 > **Note:** `reply_to` is currently implemented for Discord only. Slack message IDs (ts format like `1234567890.123456`) are accepted by the parser but the Slack adapter does not yet send threaded replies via this directive — it falls back to plain send. Slack support can be added in a future PR.
-
-## Future Directives
-
-The `[[key:value]]` format is extensible. Planned:
-- `[[ephemeral:true]]` — send as ephemeral message (only visible to trigger user)
-- `[[suppress_embeds:true]]` — prevent URL embeds
-- `[[thread_name:New Title]]` — rename thread on send

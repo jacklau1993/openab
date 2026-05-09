@@ -42,7 +42,14 @@ pub fn parse_output_directives(content: &str) -> (OutputDirectives, String) {
                     _ => {} // Unknown directives silently ignored (forward compatible)
                 }
             }
-            content_start += line.len() + 1; // +1 for newline
+            // Advance past this line + its line ending (handles both \n and \r\n)
+            content_start += line.len();
+            if content.as_bytes().get(content_start) == Some(&b'\r') {
+                content_start += 1;
+            }
+            if content.as_bytes().get(content_start) == Some(&b'\n') {
+                content_start += 1;
+            }
         } else {
             break;
         }
@@ -613,7 +620,11 @@ impl AdapterRouter {
                     };
 
                     let final_content = markdown::convert_tables(&final_content, table_mode);
-                    // Parse output directives (e.g. [[reply_to:msg_id]]) from content header
+                    // Parse output directives (e.g. [[reply_to:msg_id]]) from content header.
+                    // Note: reply_to only takes effect in send-once mode (placeholder_msg == None).
+                    // In streaming mode, the placeholder is already sent before we know the directive.
+                    // This is acceptable: streaming is disabled in multi-bot threads (where reply-to
+                    // matters most), so the common multi-agent case always uses send-once.
                     let (directives, stripped_content) = parse_output_directives(&final_content);
                     let final_content = stripped_content;
                     let chunks = format::split_message(&final_content, message_limit);

@@ -89,11 +89,16 @@ impl ChatAdapter for DiscordAdapter {
         let builder = serenity::builder::CreateMessage::new()
             .content(content)
             .reference_message((ChannelId::new(ch_id), MessageId::new(msg_id)));
-        let msg = ChannelId::new(ch_id).send_message(&self.http, builder).await?;
-        Ok(MessageRef {
-            channel: channel.clone(),
-            message_id: msg.id.to_string(),
-        })
+        match ChannelId::new(ch_id).send_message(&self.http, builder).await {
+            Ok(msg) => Ok(MessageRef {
+                channel: channel.clone(),
+                message_id: msg.id.to_string(),
+            }),
+            Err(_) => {
+                // Fallback to plain send if reply fails (e.g. unknown message, cross-channel)
+                self.send_message(channel, content).await
+            }
+        }
     }
 
     async fn edit_message(&self, msg: &MessageRef, content: &str) -> anyhow::Result<()> {

@@ -622,7 +622,12 @@ impl AdapterRouter {
                     let final_content = markdown::convert_tables(&final_content, table_mode);
                     // Parse output directives (e.g. [[reply_to:msg_id]]) from content header.
                     let (directives, stripped_content) = parse_output_directives(&final_content);
-                    let final_content = stripped_content;
+                    // Guard: if content is empty after stripping directives, use fallback
+                    let final_content = if stripped_content.trim().is_empty() {
+                        "_(no response)_".to_string()
+                    } else {
+                        stripped_content
+                    };
                     let chunks = format::split_message(&final_content, message_limit);
                     if let Some(msg) = placeholder_msg {
                         if directives.reply_to.is_some() {

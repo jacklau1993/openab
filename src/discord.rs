@@ -630,6 +630,7 @@ impl EventHandler for Handler {
             msg.author.bot,
             &msg.timestamp.to_rfc3339().unwrap_or_default(),
             &msg.id.to_string(),
+            &bot_id.to_string(),
         );
 
         // Build extra content blocks from attachments (audio -> STT, text -> inline,
@@ -1370,6 +1371,7 @@ fn build_sender_context(
     is_bot: bool,
     timestamp: &str,
     message_id: &str,
+    receiver_id: &str,
 ) -> SenderContext {
     SenderContext {
         schema: "openab.sender.v1".into(),
@@ -1382,6 +1384,7 @@ fn build_sender_context(
         is_bot,
         timestamp: Some(timestamp.to_string()),
         message_id: Some(message_id.to_string()),
+        receiver_id: Some(receiver_id.to_string()),
     }
 }
 
@@ -1758,12 +1761,14 @@ mod tests {
             false,
             "2026-05-01T00:00:00Z",
             "msg123",
+            "bot99",
         );
         assert_eq!(ctx.channel_id, "parent_ch");
         assert_eq!(ctx.thread_id, Some("thread_ch".to_string()));
         assert_eq!(ctx.channel, "discord");
         assert_eq!(ctx.sender_id, "user1");
         assert!(!ctx.is_bot);
+        assert_eq!(ctx.receiver_id, Some("bot99".to_string()));
     }
 
     /// Non-thread message: channel_id = message channel, thread_id = None.
@@ -1778,6 +1783,7 @@ mod tests {
             false,
             "2026-05-01T00:00:00Z",
             "msg456",
+            "bot99",
         );
         assert_eq!(ctx.channel_id, "main_ch");
         assert_eq!(ctx.thread_id, None);
@@ -1795,6 +1801,7 @@ mod tests {
             true,
             "2026-05-01T00:00:00Z",
             "msg789",
+            "bot99",
         );
         assert!(ctx.is_bot);
         assert_eq!(ctx.channel_id, "parent");

@@ -50,16 +50,22 @@ impl ReminderStore {
 
     /// Add a reminder and persist to disk.
     pub async fn add(&self, reminder: Reminder) {
-        let mut reminders = self.reminders.lock().await;
-        reminders.push(reminder);
-        self.persist(&reminders);
+        let snapshot = {
+            let mut reminders = self.reminders.lock().await;
+            reminders.push(reminder);
+            reminders.clone()
+        };
+        self.persist(&snapshot);
     }
 
     /// Remove a reminder by ID and persist.
     pub async fn remove(&self, id: &str) {
-        let mut reminders = self.reminders.lock().await;
-        reminders.retain(|r| r.id != id);
-        self.persist(&reminders);
+        let snapshot = {
+            let mut reminders = self.reminders.lock().await;
+            reminders.retain(|r| r.id != id);
+            reminders.clone()
+        };
+        self.persist(&snapshot);
     }
 
     /// Get all pending reminders (for startup re-scheduling).
@@ -68,8 +74,15 @@ impl ReminderStore {
     }
 
     fn persist(&self, reminders: &[Reminder]) {
-        if let Err(e) = std::fs::write(&self.path, serde_json::to_string_pretty(reminders).unwrap_or_default()) {
-            error!(error = %e, "failed to persist reminders.json");
+        match serde_json::to_string_pretty(reminders) {
+            Ok(data) => {
+                if let Err(e) = std::fs::write(&self.path, data) {
+                    error!(error = %e, "failed to persist reminders.json");
+                }
+            }
+            Err(e) => {
+                error!(error = %e, "failed to serialize reminders, skipping persist");
+            }
         }
     }
 }
@@ -198,10 +211,8 @@ mod tests {
 
     #[test]
     fn test_parse_delay_too_short() {
-        assert!(parse_delay("30").is_err()); // 30 seconds via bare number = 30*60=1800, actually valid
-        // Actually 30 bare = 30 minutes = 1800s, that's valid
-        // Let's test actual too-short
         assert!(parse_delay("0m").is_err());
+        assert!(parse_delay("0h").is_err());
     }
 
     #[test]

@@ -1179,6 +1179,7 @@ impl Handler {
             .and_then(|o| o.value.as_str())
             .unwrap_or("");
 
+        const MAX_MESSAGE_LEN: usize = 1800;
         if targets_raw.is_empty() || message.is_empty() || delay_raw.is_empty() {
             let response = CreateInteractionResponse::Message(
                 CreateInteractionResponseMessage::new()
@@ -1203,6 +1204,19 @@ impl Handler {
             }
         };
 
+        if message.len() > MAX_MESSAGE_LEN {
+            let response = CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .content(format!("⚠️ Message too long (max {MAX_MESSAGE_LEN} characters)."))
+                    .ephemeral(true),
+            );
+            let _ = cmd.create_response(&ctx.http, response).await;
+            return;
+        }
+
+        // Strip @everyone / @here to prevent unintended mass pings.
+        let message = message.replace("@everyone", "@\u{200b}everyone").replace("@here", "@\u{200b}here");
+
         // Extract mention strings from targets (keep raw — Discord renders them)
         let targets: Vec<String> = targets_raw
             .split_whitespace()
@@ -1226,7 +1240,7 @@ impl Handler {
             channel_id: cmd.channel_id.get(),
             sender_id: cmd.user.id.get(),
             targets: targets.clone(),
-            message: message.to_string(),
+            message: message.clone(),
             fire_at,
             created_at: chrono::Utc::now(),
         };

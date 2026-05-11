@@ -454,19 +454,36 @@ async fn main() -> anyhow::Result<()> {
                 scheduled_ids: tokio::sync::Mutex::new(std::collections::HashSet::new()),
             };
 
-            let mut client = Client::builder(&discord_cfg.bot_token, intents)
+            // F1 fix: handle builder errors within the loop instead of propagating with ?
+            let mut client = match Client::builder(&discord_cfg.bot_token, intents)
                 .event_handler(handler)
-                .await?;
+                .await
+            {
+                Ok(c) => c,
+                Err(e) => {
+                    warn!(error = %e, delay_secs = reconnect_delay.as_secs(), "failed to build discord client, retrying");
+                    tokio::select! {
+                        _ = tokio::time::sleep(reconnect_delay) => {}
+                        _ = shutdown_rx_discord.changed() => { break; }
+                    }
+                    reconnect_delay = (reconnect_delay * 2).min(MAX_RECONNECT_DELAY);
+                    continue;
+                }
+            };
 
+            // F2 fix: use an abort handle so the shutdown listener is cleaned up each iteration
             let shard_manager = client.shard_manager.clone();
             let mut shutdown_rx_inner = shutdown_rx.clone();
-            tokio::spawn(async move {
+            let shutdown_task = tokio::spawn(async move {
                 let _ = shutdown_rx_inner.changed().await;
                 shard_manager.shutdown_all().await;
             });
 
             info!("discord bot running");
             let result = client.start().await;
+
+            // Abort the shutdown listener for this iteration to avoid accumulation.
+            shutdown_task.abort();
 
             // Check if we're shutting down — if so, don't reconnect.
             if *shutdown_rx_discord.borrow() {
@@ -491,20 +508,23 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Err(e) => {
                     warn!(error = %e, delay_secs = reconnect_delay.as_secs(), "discord gateway error, reconnecting");
+                    // F3 fix: escalate backoff only on errors
+                    tokio::select! {
+                        _ = tokio::time::sleep(reconnect_delay) => {}
+                        _ = shutdown_rx_discord.changed() => { break; }
+                    }
+                    reconnect_delay = (reconnect_delay * 2).min(MAX_RECONNECT_DELAY);
                 }
                 Ok(_) => {
-                    // Gateway ran successfully then disconnected — reset backoff.
+                    // Gateway ran successfully then disconnected — reset backoff and retry quickly.
                     reconnect_delay = std::time::Duration::from_secs(1);
                     warn!("discord gateway exited, reconnecting in 1s");
+                    tokio::select! {
+                        _ = tokio::time::sleep(reconnect_delay) => {}
+                        _ = shutdown_rx_discord.changed() => { break; }
+                    }
                 }
             }
-
-            tokio::select! {
-                _ = tokio::time::sleep(reconnect_delay) => {}
-                _ = shutdown_rx_discord.changed() => { break; }
-            }
-            // Escalate delay only for errors (Ok resets above).
-            reconnect_delay = (reconnect_delay * 2).min(MAX_RECONNECT_DELAY);
         }
     } else {
         // No Discord — wait for SIGINT or SIGTERM

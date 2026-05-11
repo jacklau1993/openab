@@ -361,6 +361,14 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
+    // Spawn shutdown signal listener that notifies all adapters via shutdown_tx.
+    let shutdown_tx_signal = shutdown_tx.clone();
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        info!("shutdown signal received");
+        let _ = shutdown_tx_signal.send(true);
+    });
+
     // Run Discord adapter (foreground, blocking) or wait for ctrl_c
     if let Some(discord_cfg) = cfg.discord {
         let allow_all_channels = config::resolve_allow_all(
@@ -411,74 +419,98 @@ async fn main() -> anyhow::Result<()> {
             .join(".openab")
             .join("reminders.json");
         let reminder_store = remind::ReminderStore::load(reminder_path);
-
-        let handler = discord::Handler {
-            router,
-            allow_all_channels,
-            allow_all_users,
-            allowed_channels,
-            allowed_users,
-            stt_config: cfg.stt.clone(),
-            adapter: std::sync::OnceLock::new(),
-            allow_bot_messages: discord_cfg.allow_bot_messages,
-            trusted_bot_ids,
-            allow_user_messages: discord_cfg.allow_user_messages,
-            allowed_role_ids,
-            participated_threads: tokio::sync::Mutex::new(std::collections::HashMap::new()),
-            multibot_threads: tokio::sync::Mutex::new(std::collections::HashMap::new()),
-            session_ttl: std::time::Duration::from_secs(ttl_secs),
-            max_bot_turns: discord_cfg.max_bot_turns,
-            bot_turns: tokio::sync::Mutex::new(bot_turns::BotTurnTracker::new(
-                discord_cfg.max_bot_turns,
-            )),
-            allow_dm: discord_cfg.allow_dm,
-            dispatcher: discord_dispatcher,
-            reminder_store: reminder_store.clone(),
-            scheduled_ids: tokio::sync::Mutex::new(std::collections::HashSet::new()),
-        };
-
         let intents = GatewayIntents::GUILD_MESSAGES
             | GatewayIntents::MESSAGE_CONTENT
             | GatewayIntents::GUILDS
             | GatewayIntents::DIRECT_MESSAGES;
 
-        let mut client = Client::builder(&discord_cfg.bot_token, intents)
-            .event_handler(handler)
-            .await?;
+        let mut reconnect_delay = std::time::Duration::from_secs(1);
+        const MAX_RECONNECT_DELAY: std::time::Duration = std::time::Duration::from_secs(60);
+        let mut shutdown_rx_discord = shutdown_rx.clone();
 
-        // Graceful Discord shutdown on ctrl_c
-        let shard_manager = client.shard_manager.clone();
-        tokio::spawn(async move {
-            shutdown_signal().await;
-            info!("shutdown signal received");
-            shard_manager.shutdown_all().await;
-        });
+        loop {
+            let handler = discord::Handler {
+                router: router.clone(),
+                allow_all_channels,
+                allow_all_users,
+                allowed_channels: allowed_channels.clone(),
+                allowed_users: allowed_users.clone(),
+                stt_config: cfg.stt.clone(),
+                adapter: std::sync::OnceLock::new(),
+                allow_bot_messages: discord_cfg.allow_bot_messages,
+                trusted_bot_ids: trusted_bot_ids.clone(),
+                allow_user_messages: discord_cfg.allow_user_messages,
+                allowed_role_ids: allowed_role_ids.clone(),
+                participated_threads: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+                multibot_threads: tokio::sync::Mutex::new(std::collections::HashMap::new()),
+                session_ttl: std::time::Duration::from_secs(ttl_secs),
+                max_bot_turns: discord_cfg.max_bot_turns,
+                bot_turns: tokio::sync::Mutex::new(bot_turns::BotTurnTracker::new(
+                    discord_cfg.max_bot_turns,
+                )),
+                allow_dm: discord_cfg.allow_dm,
+                dispatcher: discord_dispatcher.clone(),
+                reminder_store: reminder_store.clone(),
+                scheduled_ids: tokio::sync::Mutex::new(std::collections::HashSet::new()),
+            };
 
-        info!("discord bot running");
-        match client.start().await {
-            Err(serenity::Error::Gateway(GatewayError::DisallowedGatewayIntents)) => {
-                error!(
-                    "Discord rejected privileged intents. \
-                     Enable MESSAGE CONTENT INTENT at: \
-                     https://discord.com/developers/applications → Bot → Privileged Gateway Intents"
-                );
-                std::process::exit(1);
+            let mut client = Client::builder(&discord_cfg.bot_token, intents)
+                .event_handler(handler)
+                .await?;
+
+            let shard_manager = client.shard_manager.clone();
+            let mut shutdown_rx_inner = shutdown_rx.clone();
+            tokio::spawn(async move {
+                let _ = shutdown_rx_inner.changed().await;
+                shard_manager.shutdown_all().await;
+            });
+
+            info!("discord bot running");
+            let result = client.start().await;
+
+            // Check if we're shutting down — if so, don't reconnect.
+            if *shutdown_rx_discord.borrow() {
+                break;
             }
-            Err(serenity::Error::Gateway(GatewayError::InvalidAuthentication)) => {
-                error!(
-                    "Discord rejected bot token. \
-                     Verify your bot_token in config.toml is correct and has not been reset."
-                );
-                std::process::exit(1);
+
+            match result {
+                Err(serenity::Error::Gateway(GatewayError::DisallowedGatewayIntents)) => {
+                    error!(
+                        "Discord rejected privileged intents. \
+                         Enable MESSAGE CONTENT INTENT at: \
+                         https://discord.com/developers/applications → Bot → Privileged Gateway Intents"
+                    );
+                    std::process::exit(1);
+                }
+                Err(serenity::Error::Gateway(GatewayError::InvalidAuthentication)) => {
+                    error!(
+                        "Discord rejected bot token. \
+                         Verify your bot_token in config.toml is correct and has not been reset."
+                    );
+                    std::process::exit(1);
+                }
+                Err(e) => {
+                    warn!(error = %e, delay_secs = reconnect_delay.as_secs(), "discord gateway error, reconnecting");
+                }
+                Ok(_) => {
+                    // Gateway ran successfully then disconnected — reset backoff.
+                    reconnect_delay = std::time::Duration::from_secs(1);
+                    warn!("discord gateway exited, reconnecting in 1s");
+                }
             }
-            Err(e) => return Err(e.into()),
-            Ok(_) => {}
+
+            tokio::select! {
+                _ = tokio::time::sleep(reconnect_delay) => {}
+                _ = shutdown_rx_discord.changed() => { break; }
+            }
+            // Escalate delay only for errors (Ok resets above).
+            reconnect_delay = (reconnect_delay * 2).min(MAX_RECONNECT_DELAY);
         }
     } else {
         // No Discord — wait for SIGINT or SIGTERM
         info!("running without discord, press ctrl+c to stop");
-        shutdown_signal().await;
-        info!("shutdown signal received");
+        let mut shutdown_rx_wait = shutdown_rx.clone();
+        let _ = shutdown_rx_wait.changed().await;
     }
 
     // Cleanup

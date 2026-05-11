@@ -1188,7 +1188,7 @@ impl Handler {
             .and_then(|o| o.value.as_str())
             .unwrap_or("");
 
-        const MAX_MESSAGE_LEN: usize = 1800;
+        const MAX_MESSAGE_LEN: usize = remind::MAX_MESSAGE_LEN;
         if targets_raw.is_empty() || message.is_empty() || delay_raw.is_empty() {
             let response = CreateInteractionResponse::Message(
                 CreateInteractionResponseMessage::new()
@@ -1224,7 +1224,7 @@ impl Handler {
         }
 
         // Strip @everyone / @here to prevent unintended mass pings.
-        let message = message.replace("@everyone", "@\u{200b}everyone").replace("@here", "@\u{200b}here");
+        let message = remind::sanitize_message(message);
 
         // Extract mention strings from targets (keep raw — Discord renders them)
         let targets: Vec<String> = targets_raw

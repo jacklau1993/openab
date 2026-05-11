@@ -93,6 +93,24 @@ impl ReminderStore {
     }
 }
 
+/// Maximum allowed message length for reminders.
+pub const MAX_MESSAGE_LEN: usize = 1800;
+
+/// Sanitize reminder message: neutralize @everyone/@here.
+pub fn sanitize_message(msg: &str) -> String {
+    msg.replace("@everyone", "@\u{200b}everyone")
+        .replace("@here", "@\u{200b}here")
+}
+
+/// Validate reminder message length.
+pub fn validate_message(msg: &str) -> Result<(), String> {
+    if msg.len() > MAX_MESSAGE_LEN {
+        Err(format!("message too long (max {MAX_MESSAGE_LEN} characters)"))
+    } else {
+        Ok(())
+    }
+}
+
 /// Parse a human delay string like "30m", "2h", "7d" into seconds.
 /// Supports combinations: "1h30m", "2d12h".
 /// Range: 1m (60s) to 30d (2_592_000s).
@@ -233,5 +251,141 @@ mod tests {
         assert_eq!(format_delay(3600), "1h");
         assert_eq!(format_delay(5400), "1h 30m");
         assert_eq!(format_delay(90000), "1d 1h");
+    }
+
+    #[test]
+    fn test_parse_delay_empty() {
+        assert!(parse_delay("").is_err());
+        assert!(parse_delay("   ").is_err());
+    }
+
+    #[test]
+    fn test_parse_delay_invalid_unit() {
+        assert!(parse_delay("2x").is_err());
+        assert!(parse_delay("abc").is_err());
+        assert!(parse_delay("5s").is_err());
+    }
+
+    #[test]
+    fn test_parse_delay_case_insensitive() {
+        assert_eq!(parse_delay("2H").unwrap(), 7200);
+        assert_eq!(parse_delay("1D30M").unwrap(), 88200);
+    }
+
+    #[test]
+    fn test_parse_delay_whitespace_trimmed() {
+        assert_eq!(parse_delay(" 5m ").unwrap(), 300);
+    }
+
+    #[test]
+    fn test_parse_delay_bare_number_boundary() {
+        assert_eq!(parse_delay("1").unwrap(), 60); // 1 min
+        assert_eq!(parse_delay("30").unwrap(), 1800); // 30 min
+    }
+
+    #[test]
+    fn test_parse_delay_exact_boundaries() {
+        // Exactly 1m (minimum)
+        assert_eq!(parse_delay("1m").unwrap(), 60);
+        // Exactly 30d (maximum)
+        assert_eq!(parse_delay("30d").unwrap(), 2_592_000);
+        // Just over 30d
+        assert!(parse_delay("30d1m").is_err());
+    }
+
+    #[test]
+    fn test_format_delay_zero() {
+        assert_eq!(format_delay(0), "< 1m");
+    }
+
+    #[test]
+    fn test_format_delay_pure_units() {
+        assert_eq!(format_delay(86400), "1d");
+        assert_eq!(format_delay(120), "2m");
+        assert_eq!(format_delay(7200), "2h");
+    }
+
+    #[tokio::test]
+    async fn test_reminder_store_add_remove() {
+        let dir = std::env::temp_dir().join(format!("remind_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("reminders.json");
+
+        let store = ReminderStore::load(path.clone());
+        assert_eq!(store.pending().await.len(), 0);
+
+        let r = Reminder {
+            id: "test-1".into(),
+            channel_id: 123,
+            sender_id: 456,
+            targets: vec!["<@789>".into()],
+            message: "hello".into(),
+            fire_at: Utc::now() + chrono::Duration::hours(1),
+            created_at: Utc::now(),
+        };
+
+        store.add(r).await;
+        assert_eq!(store.pending().await.len(), 1);
+
+        store.remove("test-1").await;
+        assert_eq!(store.pending().await.len(), 0);
+
+        // Verify persistence
+        let store2 = ReminderStore::load(path.clone());
+        assert_eq!(store2.pending().await.len(), 0);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[tokio::test]
+    async fn test_reminder_store_persists_across_reload() {
+        let dir = std::env::temp_dir().join(format!("remind_test2_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("reminders.json");
+
+        let store = ReminderStore::load(path.clone());
+        let r = Reminder {
+            id: "persist-1".into(),
+            channel_id: 100,
+            sender_id: 200,
+            targets: vec!["<@300>".into()],
+            message: "persist test".into(),
+            fire_at: Utc::now() + chrono::Duration::hours(2),
+            created_at: Utc::now(),
+        };
+        store.add(r).await;
+
+        // Reload from disk
+        let store2 = ReminderStore::load(path.clone());
+        let pending = store2.pending().await;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, "persist-1");
+        assert_eq!(pending[0].message, "persist test");
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_sanitize_message_strips_everyone_here() {
+        assert_eq!(sanitize_message("hello @everyone"), "hello @\u{200b}everyone");
+        assert_eq!(sanitize_message("hey @here check"), "hey @\u{200b}here check");
+        assert_eq!(sanitize_message("@everyone @here"), "@\u{200b}everyone @\u{200b}here");
+    }
+
+    #[test]
+    fn test_sanitize_message_no_change() {
+        assert_eq!(sanitize_message("normal message"), "normal message");
+        assert_eq!(sanitize_message("<@123> hello"), "<@123> hello");
+    }
+
+    #[test]
+    fn test_validate_message_ok() {
+        assert!(validate_message("short message").is_ok());
+        assert!(validate_message(&"a".repeat(1800)).is_ok());
+    }
+
+    #[test]
+    fn test_validate_message_too_long() {
+        assert!(validate_message(&"a".repeat(1801)).is_err());
     }
 }

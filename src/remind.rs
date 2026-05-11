@@ -76,6 +76,12 @@ impl ReminderStore {
     fn persist(&self, reminders: &[Reminder]) {
         match serde_json::to_string_pretty(reminders) {
             Ok(data) => {
+                if let Some(parent) = self.path.parent() {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        error!(error = %e, "failed to create reminders directory");
+                        return;
+                    }
+                }
                 if let Err(e) = std::fs::write(&self.path, data) {
                     error!(error = %e, "failed to persist reminders.json");
                 }
@@ -167,13 +173,15 @@ pub fn schedule_reminder(
         );
 
         let channel = ChannelId::new(reminder.channel_id);
-        if let Err(e) = channel.say(&http, &content).await {
-            error!(error = %e, id = %id, "failed to send reminder");
-        } else {
-            info!(id = %id, channel = reminder.channel_id, "reminder fired");
+        match channel.say(&http, &content).await {
+            Ok(_) => {
+                info!(id = %id, channel = reminder.channel_id, "reminder fired");
+                store.remove(&id).await;
+            }
+            Err(e) => {
+                error!(error = %e, id = %id, "failed to send reminder — keeping for retry on next restart");
+            }
         }
-
-        store.remove(&id).await;
     });
 }
 

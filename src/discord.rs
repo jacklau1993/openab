@@ -210,6 +210,8 @@ pub struct Handler {
     pub dispatcher: Arc<crate::dispatch::Dispatcher>,
     /// Reminder store for /remind slash command.
     pub reminder_store: ReminderStore,
+    /// Track scheduled reminder IDs to prevent duplicate scheduling on reconnect.
+    pub scheduled_ids: tokio::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl Handler {
@@ -857,9 +859,16 @@ impl EventHandler for Handler {
         // Re-schedule any pending reminders that survived a restart.
         let pending = self.reminder_store.pending().await;
         if !pending.is_empty() {
-            info!(count = pending.len(), "re-scheduling pending reminders");
+            let mut scheduled = self.scheduled_ids.lock().await;
+            let mut count = 0;
             for r in pending {
-                remind::schedule_reminder(ctx.http.clone(), self.reminder_store.clone(), r);
+                if scheduled.insert(r.id.clone()) {
+                    remind::schedule_reminder(ctx.http.clone(), self.reminder_store.clone(), r);
+                    count += 1;
+                }
+            }
+            if count > 0 {
+                info!(count, "re-scheduled pending reminders");
             }
         }
     }
@@ -1228,6 +1237,20 @@ impl Handler {
             let response = CreateInteractionResponse::Message(
                 CreateInteractionResponseMessage::new()
                     .content("⚠️ No valid mentions found in targets. Use @user or @role.")
+                    .ephemeral(true),
+            );
+            let _ = cmd.create_response(&ctx.http, response).await;
+            return;
+        }
+
+        // F4: Per-user rate limit (max 5 active reminders)
+        let user_id = cmd.user.id.get();
+        let pending = self.reminder_store.pending().await;
+        let user_count = pending.iter().filter(|r| r.sender_id == user_id).count();
+        if user_count >= 5 {
+            let response = CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .content("⚠️ You already have 5 active reminders. Wait for some to fire before adding more.")
                     .ephemeral(true),
             );
             let _ = cmd.create_response(&ctx.http, response).await;

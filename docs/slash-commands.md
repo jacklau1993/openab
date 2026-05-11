@@ -97,19 +97,21 @@ Set a one-shot delayed reminder that mentions users or roles in the channel afte
 - Only humans can use `/remind` (bots are rejected)
 - Minimum delay: 1 minute
 - Maximum delay: 30 days
+- Maximum message length: 1800 characters
+- Maximum 5 active reminders per user
 - One-shot only (fires once, then removed)
 - Reminders persist across bot restarts (stored in `$HOME/.openab/reminders.json`)
 
 **Examples:**
 ```
-/remind targets:@超渡法師 @普渡法師 message:Review PR #42 delay:2h
-/remind targets:@法師們 message:Stand-up time delay:30m
-/remind targets:@pahud message:Check deployment delay:1d
+/remind targets:@Alice @Bob message:Review PR #42 delay:2h
+/remind targets:@Reviewers message:Stand-up time delay:30m
+/remind targets:@Charlie message:Check deployment delay:1d
 ```
 
 **When fired, the bot posts:**
 ```
 ⏰ Reminder from @sender:
 "Review PR #42"
-cc @超渡法師 @普渡法師
+cc @Alice @Bob
 ```

@@ -195,6 +195,10 @@ pub struct SenderContext {
     /// via the `[[reply_to:<message_id>]]` output directive.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_id: Option<String>,
+    /// The platform user ID of the receiving bot/agent.
+    /// Enables agents to identify themselves when multiple agents share the same backend.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub receiver_id: Option<String>,
 }
 
 // --- ChatAdapter trait ---

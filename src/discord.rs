@@ -1188,7 +1188,6 @@ impl Handler {
             .and_then(|o| o.value.as_str())
             .unwrap_or("");
 
-        const MAX_MESSAGE_LEN: usize = remind::MAX_MESSAGE_LEN;
         if targets_raw.is_empty() || message.is_empty() || delay_raw.is_empty() {
             let response = CreateInteractionResponse::Message(
                 CreateInteractionResponseMessage::new()
@@ -1213,10 +1212,10 @@ impl Handler {
             }
         };
 
-        if message.len() > MAX_MESSAGE_LEN {
+        if let Err(e) = remind::validate_message(message) {
             let response = CreateInteractionResponse::Message(
                 CreateInteractionResponseMessage::new()
-                    .content(format!("⚠️ Message too long (max {MAX_MESSAGE_LEN} characters)."))
+                    .content(format!("⚠️ {e}"))
                     .ephemeral(true),
             );
             let _ = cmd.create_response(&ctx.http, response).await;

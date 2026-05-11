@@ -10,6 +10,7 @@ OpenAB registers Discord slash commands for session control. These work in both 
 | `/agents` | Select the agent mode via dropdown menu | Yes |
 | `/cancel` | Cancel the current in-flight operation | Yes |
 | `/reset` | Reset the conversation session (clear history, start fresh) | Yes |
+| `/remind` | Set a one-shot delayed reminder to mention users/roles | No |
 
 All responses are **ephemeral** — only the user who invoked the command sees the reply.
 
@@ -74,3 +75,45 @@ In addition to slash commands, you can pass built-in CLI commands directly after
 ```
 
 These are forwarded as-is to the ACP session as a prompt. Any command the underlying CLI supports in its interactive mode works here. This is the recommended workaround for agents that don't expose `configOptions`.
+
+## `/remind`
+
+Set a one-shot delayed reminder that mentions users or roles in the channel after a specified delay.
+
+**Syntax:**
+```
+/remind targets:<@user @role ...> message:<text> delay:<duration>
+```
+
+**Parameters:**
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `targets` | Yes | Space-separated @mentions (users and/or roles) |
+| `message` | Yes | Reminder text |
+| `delay` | Yes | Duration before firing: `1m` to `30d` (supports `m`, `h`, `d` and combinations like `1h30m`) |
+
+**Constraints:**
+- Only humans can use `/remind` (bots are rejected)
+- Minimum delay: 1 minute
+- Maximum delay: 30 days
+- Maximum message length: 1800 characters
+- Maximum 5 active reminders per user
+- Maximum 10 mention targets per reminder (use a @role for larger groups)
+- `@everyone` and `@here` in messages are automatically neutralized (will not trigger mass mentions)
+- One-shot only (fires once, then removed)
+- Reminders persist across bot restarts (stored in `$HOME/.openab/reminders.json`)
+
+**Examples:**
+```
+/remind targets:@Alice @Bob message:Review PR #42 delay:2h
+/remind targets:@Reviewers message:Stand-up time delay:30m
+/remind targets:@Charlie message:Check deployment delay:1d
+```
+
+**When fired, the bot posts:**
+```
+⏰ Reminder from @sender:
+"Review PR #42"
+cc @Alice @Bob
+```

@@ -5,15 +5,16 @@ use crate::bot_turns::{BotTurnTracker, TurnAction, TurnSeverity};
 use crate::config::{AllowBots, AllowUsers, SttConfig};
 use crate::format;
 use crate::media;
+use crate::remind::{self, ReminderStore};
 use async_trait::async_trait;
 use serenity::builder::{
-    CreateActionRow, CreateButton, CreateCommand, CreateInteractionResponse,
+    CreateActionRow, CreateButton, CreateCommand, CreateCommandOption, CreateInteractionResponse,
     CreateInteractionResponseMessage, CreateSelectMenu, CreateSelectMenuKind,
     CreateSelectMenuOption, CreateThread, EditMessage,
 };
 use serenity::http::Http;
 use serenity::model::application::ButtonStyle;
-use serenity::model::application::{Command, ComponentInteractionDataKind, Interaction};
+use serenity::model::application::{Command, CommandOptionType, ComponentInteractionDataKind, Interaction};
 use serenity::model::channel::{AutoArchiveDuration, Message, MessageType, ReactionType};
 use serenity::model::gateway::Ready;
 use serenity::model::id::{ChannelId, MessageId, UserId};
@@ -207,6 +208,8 @@ pub struct Handler {
     pub allow_dm: bool,
     /// Per-thread dispatcher (Message mode uses cap=1 for FIFO; Thread/Lane use configured cap).
     pub dispatcher: Arc<crate::dispatch::Dispatcher>,
+    /// Reminder store for /remind slash command.
+    pub reminder_store: ReminderStore,
 }
 
 impl Handler {
@@ -815,6 +818,23 @@ impl EventHandler for Handler {
             CreateCommand::new("cancel-all")
                 .description("Cancel current operation and drop all buffered messages"),
             CreateCommand::new("reset").description("Reset the conversation session"),
+            CreateCommand::new("remind")
+                .description("Set a one-shot reminder to mention users/roles after a delay")
+                .add_option(CreateCommandOption::new(
+                    CommandOptionType::String,
+                    "targets",
+                    "Users/roles to mention (e.g. @user1 @role1)",
+                ).required(true))
+                .add_option(CreateCommandOption::new(
+                    CommandOptionType::String,
+                    "message",
+                    "Reminder message",
+                ).required(true))
+                .add_option(CreateCommandOption::new(
+                    CommandOptionType::String,
+                    "delay",
+                    "Delay before firing (e.g. 30m, 2h, 1d)",
+                ).required(true)),
         ];
 
         // Register global commands (works in DMs + all guilds after propagation).
@@ -831,6 +851,15 @@ impl EventHandler for Handler {
                 tracing::warn!(%guild_id, error = %e, "failed to register guild slash commands");
             } else {
                 info!(%guild_id, "registered guild slash commands");
+            }
+        }
+
+        // Re-schedule any pending reminders that survived a restart.
+        let pending = self.reminder_store.pending().await;
+        if !pending.is_empty() {
+            info!(count = pending.len(), "re-scheduling pending reminders");
+            for r in pending {
+                remind::schedule_reminder(ctx.http.clone(), self.reminder_store.clone(), r);
             }
         }
     }
@@ -853,6 +882,9 @@ impl EventHandler for Handler {
             }
             Interaction::Command(cmd) if cmd.data.name == "reset" => {
                 self.handle_reset_command(&ctx, &cmd).await;
+            }
+            Interaction::Command(cmd) if cmd.data.name == "remind" => {
+                self.handle_remind_command(&ctx, &cmd).await;
             }
             Interaction::Component(comp) if comp.data.custom_id.starts_with("acp_config_") => {
                 self.handle_config_select(&ctx, &comp).await;
@@ -1113,6 +1145,107 @@ impl Handler {
         );
         if let Err(e) = cmd.create_response(&ctx.http, response).await {
             tracing::error!(error = %e, "failed to respond to /reset command");
+        }
+    }
+
+    async fn handle_remind_command(
+        &self,
+        ctx: &Context,
+        cmd: &serenity::model::application::CommandInteraction,
+    ) {
+        // Only humans can use /remind
+        if cmd.user.bot {
+            let response = CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .content("⚠️ Only humans can set reminders.")
+                    .ephemeral(true),
+            );
+            let _ = cmd.create_response(&ctx.http, response).await;
+            return;
+        }
+
+        // Extract options
+        let opts = &cmd.data.options;
+        let targets_raw = opts.iter()
+            .find(|o| o.name == "targets")
+            .and_then(|o| o.value.as_str())
+            .unwrap_or("");
+        let message = opts.iter()
+            .find(|o| o.name == "message")
+            .and_then(|o| o.value.as_str())
+            .unwrap_or("");
+        let delay_raw = opts.iter()
+            .find(|o| o.name == "delay")
+            .and_then(|o| o.value.as_str())
+            .unwrap_or("");
+
+        if targets_raw.is_empty() || message.is_empty() || delay_raw.is_empty() {
+            let response = CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .content("⚠️ All fields (targets, message, delay) are required.")
+                    .ephemeral(true),
+            );
+            let _ = cmd.create_response(&ctx.http, response).await;
+            return;
+        }
+
+        // Parse delay
+        let delay_secs = match remind::parse_delay(delay_raw) {
+            Ok(s) => s,
+            Err(e) => {
+                let response = CreateInteractionResponse::Message(
+                    CreateInteractionResponseMessage::new()
+                        .content(format!("⚠️ Invalid delay: {e}"))
+                        .ephemeral(true),
+                );
+                let _ = cmd.create_response(&ctx.http, response).await;
+                return;
+            }
+        };
+
+        // Extract mention strings from targets (keep raw — Discord renders them)
+        let targets: Vec<String> = targets_raw
+            .split_whitespace()
+            .filter(|t| t.starts_with("<@") && t.ends_with('>'))
+            .map(|t| t.to_string())
+            .collect();
+
+        if targets.is_empty() {
+            let response = CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .content("⚠️ No valid mentions found in targets. Use @user or @role.")
+                    .ephemeral(true),
+            );
+            let _ = cmd.create_response(&ctx.http, response).await;
+            return;
+        }
+
+        let fire_at = chrono::Utc::now() + chrono::Duration::seconds(delay_secs as i64);
+        let reminder = remind::Reminder {
+            id: uuid::Uuid::new_v4().to_string(),
+            channel_id: cmd.channel_id.get(),
+            sender_id: cmd.user.id.get(),
+            targets: targets.clone(),
+            message: message.to_string(),
+            fire_at,
+            created_at: chrono::Utc::now(),
+        };
+
+        // Persist and schedule
+        self.reminder_store.add(reminder.clone()).await;
+        remind::schedule_reminder(ctx.http.clone(), self.reminder_store.clone(), reminder);
+
+        let delay_str = remind::format_delay(delay_secs);
+        let response = CreateInteractionResponse::Message(
+            CreateInteractionResponseMessage::new()
+                .content(format!(
+                    "⏰ Reminder set! Will fire in **{delay_str}** and mention {}",
+                    targets.join(" ")
+                ))
+                .ephemeral(true),
+        );
+        if let Err(e) = cmd.create_response(&ctx.http, response).await {
+            tracing::error!(error = %e, "failed to respond to /remind command");
         }
     }
 

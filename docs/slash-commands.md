@@ -99,6 +99,7 @@ Set a one-shot delayed reminder that mentions users or roles in the channel afte
 - Maximum delay: 30 days
 - Maximum message length: 1800 characters
 - Maximum 5 active reminders per user
+- Maximum 10 mention targets per reminder (use a @role for larger groups)
 - `@everyone` and `@here` in messages are automatically neutralized (will not trigger mass mentions)
 - One-shot only (fires once, then removed)
 - Reminders persist across bot restarts (stored in `$HOME/.openab/reminders.json`)

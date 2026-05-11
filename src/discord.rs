@@ -1242,6 +1242,16 @@ impl Handler {
             return;
         }
 
+        if targets.len() > remind::MAX_TARGETS {
+            let response = CreateInteractionResponse::Message(
+                CreateInteractionResponseMessage::new()
+                    .content(format!("⚠️ Too many targets (max {}). Use a @role instead.", remind::MAX_TARGETS))
+                    .ephemeral(true),
+            );
+            let _ = cmd.create_response(&ctx.http, response).await;
+            return;
+        }
+
         // F4: Per-user rate limit (max 5 active reminders)
         let user_id = cmd.user.id.get();
         let pending = self.reminder_store.pending().await;

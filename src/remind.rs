@@ -96,6 +96,9 @@ impl ReminderStore {
 /// Maximum allowed message length for reminders.
 pub const MAX_MESSAGE_LEN: usize = 1800;
 
+/// Maximum number of mention targets per reminder.
+pub const MAX_TARGETS: usize = 10;
+
 /// Sanitize reminder message: neutralize @everyone/@here.
 pub fn sanitize_message(msg: &str) -> String {
     msg.replace("@everyone", "@\u{200b}everyone")
@@ -387,5 +390,10 @@ mod tests {
     #[test]
     fn test_validate_message_too_long() {
         assert!(validate_message(&"a".repeat(1801)).is_err());
+    }
+
+    #[test]
+    fn test_max_targets_constant() {
+        assert_eq!(MAX_TARGETS, 10);
     }
 }

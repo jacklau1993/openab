@@ -1279,6 +1279,7 @@ impl Handler {
 
         // Persist and schedule
         self.reminder_store.add(reminder.clone()).await;
+        self.scheduled_ids.lock().await.insert(reminder.id.clone());
         remind::schedule_reminder(ctx.http.clone(), self.reminder_store.clone(), reminder);
 
         let delay_str = remind::format_delay(delay_secs);

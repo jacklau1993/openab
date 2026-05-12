@@ -497,6 +497,7 @@ async fn main() -> anyhow::Result<()> {
                          Enable MESSAGE CONTENT INTENT at: \
                          https://discord.com/developers/applications → Bot → Privileged Gateway Intents"
                     );
+                    // Fatal config error — exit immediately; no active sessions to drain.
                     std::process::exit(1);
                 }
                 Err(serenity::Error::Gateway(GatewayError::InvalidAuthentication)) => {
@@ -504,6 +505,7 @@ async fn main() -> anyhow::Result<()> {
                         "Discord rejected bot token. \
                          Verify your bot_token in config.toml is correct and has not been reset."
                     );
+                    // Fatal config error — exit immediately; no active sessions to drain.
                     std::process::exit(1);
                 }
                 Err(e) => {
@@ -518,7 +520,7 @@ async fn main() -> anyhow::Result<()> {
                 Ok(_) => {
                     // Gateway ran successfully then disconnected — reset backoff and retry quickly.
                     reconnect_delay = std::time::Duration::from_secs(1);
-                    warn!("discord gateway exited, reconnecting in 1s");
+                    warn!(delay_secs = reconnect_delay.as_secs(), "discord gateway exited, reconnecting");
                     tokio::select! {
                         _ = tokio::time::sleep(reconnect_delay) => {}
                         _ = shutdown_rx_discord.changed() => { break; }

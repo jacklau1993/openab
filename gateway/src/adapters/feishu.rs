@@ -233,6 +233,8 @@ mod event_types {
         pub header: Option<FeishuEventHeader>,
         pub event: Option<FeishuEventBody>,
         pub challenge: Option<String>,
+        // Parsed by serde, not consumed in current code paths.
+        #[allow(dead_code)]
         #[serde(rename = "type")]
         pub event_type_field: Option<String>,
     }
@@ -240,6 +242,8 @@ mod event_types {
     #[derive(Debug, Deserialize)]
     pub struct FeishuEventHeader {
         pub event_id: Option<String>,
+        // Parsed by serde, not consumed in current code paths.
+        #[allow(dead_code)]
         pub event_type: Option<String>,
     }
 
@@ -276,6 +280,8 @@ mod event_types {
     pub struct FeishuMention {
         pub key: Option<String>,
         pub id: Option<FeishuMentionId>,
+        // Parsed by serde, not consumed in current code paths.
+        #[allow(dead_code)]
         pub name: Option<String>,
     }
 
@@ -466,13 +472,15 @@ mod event_types {
         // Bypass: if bot has previously replied in this thread (participated),
         // no @mention needed (like Discord's "involved" mode).
         let in_thread = thread_id.is_some();
-        if channel_type == "group" && !is_bot_sender && config.require_mention {
-            if !(in_thread && bypass_mention_gating) {
-                if let Some(bot_id) = bot_open_id {
-                    let bot_mentioned = mention_ids.iter().any(|id| id == bot_id);
-                    if !bot_mentioned {
-                        return None;
-                    }
+        if channel_type == "group"
+            && !is_bot_sender
+            && config.require_mention
+            && !(in_thread && bypass_mention_gating)
+        {
+            if let Some(bot_id) = bot_open_id {
+                let bot_mentioned = mention_ids.iter().any(|id| id == bot_id);
+                if !bot_mentioned {
+                    return None;
                 }
             }
         }
@@ -850,6 +858,7 @@ pub async fn start_websocket(
 }
 
 /// Single WebSocket connection lifecycle.
+#[allow(clippy::too_many_arguments)]
 async fn ws_connect_loop(
     token_cache: &Arc<FeishuTokenCache>,
     bot_open_id_store: &Arc<RwLock<Option<String>>>,
@@ -919,7 +928,7 @@ async fn ws_connect_loop(
                                     ack.payload = Some(b"{\"code\":200}".to_vec());
                                     let ack_bytes = ack.encode_to_vec();
                                     let _ = ws_tx.send(
-                                        tokio_tungstenite::tungstenite::Message::Binary(ack_bytes.into())
+                                        tokio_tungstenite::tungstenite::Message::Binary(ack_bytes)
                                     ).await;
                                 }
                             }
@@ -940,6 +949,7 @@ async fn ws_connect_loop(
 }
 
 /// Process a single WebSocket text message.
+#[allow(clippy::too_many_arguments)]
 async fn handle_ws_message(
     text: &str,
     bot_open_id_store: &Arc<RwLock<Option<String>>>,
@@ -1164,8 +1174,8 @@ fn markdown_to_post(md: &str) -> serde_json::Value {
         let line = raw_lines[li];
         // Detect fenced code block
         let trimmed = line.trim_start();
-        if trimmed.starts_with("```") {
-            let lang = trimmed[3..].trim().to_string();
+        if let Some(after_fence) = trimmed.strip_prefix("```") {
+            let lang = after_fence.trim().to_string();
             let mut code = String::new();
             li += 1;
             while li < raw_lines.len() {
@@ -1238,9 +1248,7 @@ fn parse_inline(line: &str) -> Vec<serde_json::Value> {
                     }
                     if close_ticks == ticks {
                         // Found matching close — content between is literal
-                        for j in i..end {
-                            buf.push(chars[j]);
-                        }
+                        buf.extend(chars[i..end].iter().copied());
                         i = end + close_ticks;
                         break 'outer;
                     }
@@ -1251,9 +1259,7 @@ fn parse_inline(line: &str) -> Vec<serde_json::Value> {
             }
             if end >= len {
                 // No matching close — treat backticks as literal
-                for j in i..len {
-                    buf.push(chars[j]);
-                }
+                buf.extend(chars[i..len].iter().copied());
                 i = len;
             }
             continue;
@@ -1278,9 +1284,7 @@ fn parse_inline(line: &str) -> Vec<serde_json::Value> {
                     }
                     if close_run == run {
                         // Found matching close — strip both, keep inner text
-                        for j in after..scan {
-                            buf.push(chars[j]);
-                        }
+                        buf.extend(chars[after..scan].iter().copied());
                         i = scan + close_run;
                         found_close = true;
                         break;
@@ -1823,7 +1827,9 @@ fn detect_and_mark_multibot(
                 thread_id_for_check
                     .map(|tid| {
                         let cache = multibot_threads.lock().unwrap_or_else(|e| e.into_inner());
-                        !cache.get(tid).is_some_and(|ts| ts.elapsed().as_secs() < config.session_ttl_secs)
+                        cache
+                            .get(tid)
+                            .is_none_or(|ts| ts.elapsed().as_secs() >= config.session_ttl_secs)
                     })
                     .unwrap_or(true)
             }

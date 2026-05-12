@@ -106,6 +106,9 @@ pub struct FeishuConfig {
     /// tracking entirely — all messages will require @mention.
     /// Converted from `FEISHU_SESSION_TTL_HOURS` (user-facing, in hours) to seconds internally.
     pub session_ttl_secs: u64,
+    /// Override the API base URL. Used in tests to point at a mock server.
+    /// Always None in production (not read from env).
+    pub api_base_override: Option<String>,
 }
 
 impl FeishuConfig {
@@ -192,11 +195,15 @@ impl FeishuConfig {
             dedupe_ttl_secs,
             message_limit,
             session_ttl_secs,
+            api_base_override: None,
         })
     }
 
     /// API base URL for the configured domain.
     pub fn api_base(&self) -> String {
+        if let Some(ref base) = self.api_base_override {
+            return base.clone();
+        }
         if self.domain == "lark" {
             "https://open.larksuite.com".into()
         } else {
@@ -1904,6 +1911,9 @@ pub async fn handle_reply(
     let api_base = adapter.config.api_base();
     let text = &reply.content.text;
     let limit = adapter.config.message_limit;
+    // quote_message_id (agent-controlled reply-to) takes priority over thread_id
+    let reply_target = reply.quote_message_id.as_deref()
+        .or(reply.channel.thread_id.as_deref());
     let thread_id = reply.channel.thread_id.as_deref();
 
     // Split long messages; store sent message_ids in dedupe to prevent
@@ -1911,7 +1921,15 @@ pub async fn handle_reply(
     // Use post (rich text) format for markdown rendering.
     // When in a thread (thread_id present), use reply API to stay in the same thread.
     if text.len() <= limit {
-        match send_post_message(&adapter.client, &api_base, &token, &reply.channel.id, thread_id, text).await {
+        let result = send_post_message(&adapter.client, &api_base, &token, &reply.channel.id, reply_target, text).await;
+        // Fallback: if quote_message_id caused failure, retry without it
+        let result = if result.is_none() && reply.quote_message_id.is_some() {
+            tracing::warn!(quote_message_id = ?reply.quote_message_id, channel_id = %reply.channel.id, "reply-to failed, falling back to plain send");
+            send_post_message(&adapter.client, &api_base, &token, &reply.channel.id, thread_id, text).await
+        } else {
+            result
+        };
+        match result {
             Some(msg_id) => {
                 adapter.dedupe.is_duplicate(&msg_id);
                 // Record thread participation for mention bypass
@@ -1953,9 +1971,19 @@ pub async fn handle_reply(
     } else {
         let mut sent_any = false;
         for chunk in split_text(text, limit) {
-            if let Some(msg_id) = send_post_message(&adapter.client, &api_base, &token, &reply.channel.id, thread_id, chunk).await {
+            if let Some(msg_id) = send_post_message(&adapter.client, &api_base, &token, &reply.channel.id, reply_target, chunk).await {
                 adapter.dedupe.is_duplicate(&msg_id);
                 sent_any = true;
+            }
+        }
+        // Fallback: if quote_message_id caused all chunks to fail, retry without it
+        if !sent_any && reply.quote_message_id.is_some() {
+            tracing::warn!(quote_message_id = ?reply.quote_message_id, channel_id = %reply.channel.id, "chunked reply-to failed, falling back to plain send");
+            for chunk in split_text(text, limit) {
+                if let Some(msg_id) = send_post_message(&adapter.client, &api_base, &token, &reply.channel.id, thread_id, chunk).await {
+                    adapter.dedupe.is_duplicate(&msg_id);
+                    sent_any = true;
+                }
             }
         }
         if sent_any {
@@ -2318,6 +2346,7 @@ mod tests {
             dedupe_ttl_secs: 300,
             message_limit: 4000,
             session_ttl_secs: 86400,
+            api_base_override: None,
         }
     }
 
@@ -2941,5 +2970,149 @@ mod tests {
         // Even with bypass_mention_gating=true, Mentions mode never bypasses
         // (caller would pass false because Mentions mode always returns false)
         assert!(parse_message_event(&env, Some("ou_bot"), &cfg, false).is_none());
+    }
+
+    #[test]
+    fn quote_message_id_takes_priority_over_thread_id() {
+        use crate::schema::{GatewayReply, ReplyChannel, Content};
+        let reply = GatewayReply {
+            schema: "openab.gateway.reply.v1".into(),
+            reply_to: "evt_123".into(),
+            platform: "feishu".into(),
+            channel: ReplyChannel {
+                id: "chat_123".into(),
+                thread_id: Some("om_root".into()),
+            },
+            content: Content {
+                content_type: "text".into(),
+                text: "hello".into(),
+                attachments: vec![],
+            },
+            command: None,
+            request_id: None,
+            quote_message_id: Some("om_specific".into()),
+        };
+        // quote_message_id should take priority
+        let reply_target = reply.quote_message_id.as_deref()
+            .or(reply.channel.thread_id.as_deref());
+        assert_eq!(reply_target, Some("om_specific"));
+    }
+
+    #[test]
+    fn reply_target_falls_back_to_thread_id_when_no_quote() {
+        use crate::schema::{GatewayReply, ReplyChannel, Content};
+        let reply = GatewayReply {
+            schema: "openab.gateway.reply.v1".into(),
+            reply_to: "evt_123".into(),
+            platform: "feishu".into(),
+            channel: ReplyChannel {
+                id: "chat_123".into(),
+                thread_id: Some("om_root".into()),
+            },
+            content: Content {
+                content_type: "text".into(),
+                text: "hello".into(),
+                attachments: vec![],
+            },
+            command: None,
+            request_id: None,
+            quote_message_id: None,
+        };
+        let reply_target = reply.quote_message_id.as_deref()
+            .or(reply.channel.thread_id.as_deref());
+        assert_eq!(reply_target, Some("om_root"));
+    }
+
+    #[test]
+    fn reply_target_is_none_when_both_absent() {
+        use crate::schema::{GatewayReply, ReplyChannel, Content};
+        let reply = GatewayReply {
+            schema: "openab.gateway.reply.v1".into(),
+            reply_to: "evt_123".into(),
+            platform: "feishu".into(),
+            channel: ReplyChannel {
+                id: "chat_123".into(),
+                thread_id: None,
+            },
+            content: Content {
+                content_type: "text".into(),
+                text: "hello".into(),
+                attachments: vec![],
+            },
+            command: None,
+            request_id: None,
+            quote_message_id: None,
+        };
+        let reply_target = reply.quote_message_id.as_deref()
+            .or(reply.channel.thread_id.as_deref());
+        assert_eq!(reply_target, None);
+    }
+
+    #[tokio::test]
+    async fn quote_message_id_fallback_on_reply_failure() {
+        // Tests the actual handle_reply fallback path: when quote_message_id
+        // is set and the reply API fails, handle_reply retries as plain send.
+        let server = MockServer::start().await;
+
+        // Token endpoint
+        Mock::given(method("POST"))
+            .and(path("/open-apis/auth/v3/tenant_access_token/internal"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "code": 0,
+                "tenant_access_token": "t-test",
+                "expire": 7200
+            })))
+            .mount(&server)
+            .await;
+
+        // Reply API returns 400 (invalid quote_message_id)
+        Mock::given(method("POST"))
+            .and(path("/open-apis/im/v1/messages/om_invalid/reply"))
+            .respond_with(ResponseTemplate::new(400).set_body_string("invalid message_id"))
+            .expect(1)
+            .named("reply_api_fail")
+            .mount(&server)
+            .await;
+
+        // Plain send endpoint succeeds (fallback path)
+        Mock::given(method("POST"))
+            .and(path("/open-apis/im/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "code": 0,
+                "data": {"message_id": "om_fallback_ok"}
+            })))
+            .expect(1)
+            .named("plain_send_fallback")
+            .mount(&server)
+            .await;
+
+        let mut config = test_config();
+        config.api_base_override = Some(server.uri());
+        let adapter = FeishuAdapter::new(config);
+
+        let (event_tx, _rx) = tokio::sync::broadcast::channel(16);
+
+        let reply = crate::schema::GatewayReply {
+            schema: "openab.gateway.reply.v1".into(),
+            reply_to: "evt_123".into(),
+            platform: "feishu".into(),
+            channel: crate::schema::ReplyChannel {
+                id: "oc_chat1".into(),
+                thread_id: None,
+            },
+            content: crate::schema::Content {
+                content_type: "text".into(),
+                text: "hello from fallback test".into(),
+                attachments: vec![],
+            },
+            command: None,
+            request_id: None,
+            quote_message_id: Some("om_invalid".into()),
+        };
+
+        handle_reply(&reply, &adapter, &event_tx).await;
+        // wiremock expect(1) on both mocks verifies:
+        // 1. Reply API was called (and failed)
+        // 2. Plain send was called (fallback triggered by quote_message_id.is_some() guard)
     }
 }

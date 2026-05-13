@@ -11,6 +11,7 @@ OpenAB registers Discord slash commands for session control. These work in both 
 | `/cancel` | Cancel the current in-flight operation | Yes |
 | `/reset` | Reset the conversation session (clear history, start fresh) | Yes |
 | `/remind` | Set a one-shot delayed reminder to mention users/roles | No |
+| `/export-thread` | Export thread/DM as `.txt` (default: last 100 messages) | No |
 
 All responses are **ephemeral** — only the user who invoked the command sees the reply.
 
@@ -63,6 +64,35 @@ This is equivalent to the `sessions close` + `sessions new` pattern used by [Ope
 **What is preserved:**
 - Bot identity and system prompt (re-applied on next session creation)
 - Config settings in `config.toml`
+
+### `/export-thread`
+
+Fetches the current Discord thread or DM history and returns a `.txt` file as an ephemeral follow-up. The transcript includes message timestamps, author names and IDs, message text, and attachment URLs.
+
+**Optional parameters** (mutually exclusive — use at most one):
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `limit` | Integer | Export only the most recent N messages (1–5000) |
+| `since` | String | Export messages after this message ID (right-click → Copy Message ID) |
+| `days` | Integer | Export messages from the last N days (1–365). Rolling N×24h window from now. |
+| `all` | Boolean | Export all messages (up to 5000) |
+
+If no parameter is provided, the **last 100 messages** are exported.
+
+**Examples:**
+```
+/export-thread                              → last 100 messages (default)
+/export-thread limit:500                    → most recent 500 messages
+/export-thread since:1503744866100842698    → messages after this specific message
+/export-thread days:3                       → messages from the last 3 days (rolling 72h)
+/export-thread all:true                     → export all (cap 5000)
+```
+
+**Constraints:**
+- Only works in allowed Discord threads or enabled DMs.
+- Specifying more than one filter returns an error.
+- Very large exports may be truncated to fit Discord's attachment size limit.
 
 ## Passing CLI Commands via @mention
 

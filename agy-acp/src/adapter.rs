@@ -9,6 +9,11 @@ use crate::types::*;
 
 const DEFAULT_PRINT_TIMEOUT: &str = "20m";
 
+fn model_parts(model: &str) -> (&str, &str) {
+    let (value, name) = model.split_once('\t').unwrap_or((model, model));
+    (value.trim(), name.trim())
+}
+
 fn prompt_extra_args(extra: &str) -> Vec<String> {
     let mut args = shell_words::split(extra).unwrap_or_else(|_| {
         eprintln!("[agy-acp] WARN: failed to parse AGY_EXTRA_ARGS, ignoring");
@@ -136,10 +141,14 @@ impl Adapter {
         }
         let current = model_id
             .or_else(|| models.first().map(|s| s.as_str()))
+            .map(|model| model_parts(model).0)
             .unwrap_or("");
         let options: Vec<Value> = models
             .iter()
-            .map(|name| json!({ "value": name, "name": name }))
+            .map(|model| {
+                let (value, name) = model_parts(model);
+                json!({ "value": value, "name": name })
+            })
             .collect();
         json!([{
             "id": "model",
@@ -311,6 +320,7 @@ impl Adapter {
         let session_id = params.get("sessionId").and_then(|v| v.as_str()).unwrap_or("");
         let config_id = params.get("configId").and_then(|v| v.as_str()).unwrap_or("");
         let value = params.get("value").and_then(|v| v.as_str()).unwrap_or("");
+        let value = model_parts(value).0;
 
         if session_id.is_empty() || config_id != "model" || value.is_empty() {
             return JsonRpcResponse { jsonrpc: "2.0", id, result: None,
@@ -366,7 +376,8 @@ impl Adapter {
             }
             if let Some(model_id) = &session.model_id {
                 args.push("--model".to_string());
-                args.push(model_id.clone());
+                // Existing sessions may contain a complete row from an older adapter.
+                args.push(model_parts(model_id).0.to_string());
             }
         }
         args.push("-p".to_string());
@@ -381,7 +392,96 @@ impl Adapter {
 
 #[cfg(test)]
 mod tests {
-    use super::prompt_extra_args;
+    use super::*;
+
+    #[test]
+    fn model_options_separate_ids_and_names_from_live_or_cached_rows() {
+        let row = "gemini-3.8-flash-high\tGemini 3.8 Flash (High)";
+        let legacy = "Gemini 3.1 Pro (High)";
+        let root = std::env::temp_dir().join(format!("agy-acp-models-{}", Uuid::new_v4()));
+        let mut adapter = Adapter {
+            sessions: HashMap::new(),
+            working_dir: root.to_string_lossy().to_string(),
+            conversations_dir: root.join("conversations"),
+            state_file: root.join("sessions.json"),
+            available_models: Some(vec![row.to_string(), legacy.to_string()]),
+        };
+        adapter.save_models_cache(adapter.available_models.as_ref().unwrap());
+        adapter.available_models = adapter.load_cached_models();
+
+        for current in [None, Some(row), Some("gemini-3.8-flash-high")] {
+            let config = adapter.config_options_json(current);
+            assert_eq!(config[0]["currentValue"], "gemini-3.8-flash-high");
+            assert_eq!(
+                config[0]["options"],
+                json!([
+                    {"value": "gemini-3.8-flash-high", "name": "Gemini 3.8 Flash (High)"},
+                    {"value": legacy, "name": legacy},
+                ])
+            );
+        }
+        assert_eq!(
+            adapter.config_options_json(Some(legacy))[0]["currentValue"],
+            legacy
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn model_selection_and_restored_legacy_rows_use_only_the_id_in_argv() {
+        let row = "gemini-3.8-flash-high\tGemini 3.8 Flash (High)";
+        let root = std::env::temp_dir().join(format!("agy-acp-model-selection-{}", Uuid::new_v4()));
+        let mut adapter = Adapter {
+            sessions: HashMap::new(),
+            working_dir: root.to_string_lossy().to_string(),
+            conversations_dir: root.join("conversations"),
+            state_file: root.join("sessions.json"),
+            available_models: Some(vec![row.to_string()]),
+        };
+        let created = adapter.handle_session_new(json!(1));
+        let session_id = created.result.unwrap()["sessionId"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        for value in ["gemini-3.8-flash-high", row] {
+            let response = adapter.handle_session_set_config_option(
+                json!(2),
+                &json!({
+                    "sessionId": session_id, "configId": "model", "value": value,
+                }),
+            );
+            assert!(response.error.is_none());
+            assert_eq!(
+                adapter.sessions[&session_id].model_id.as_deref(),
+                Some("gemini-3.8-flash-high")
+            );
+            assert_eq!(
+                adapter.load_store().sessions[&session_id]
+                    .model_id
+                    .as_deref(),
+                Some("gemini-3.8-flash-high")
+            );
+        }
+
+        // Simulate state persisted before this fix, without rewriting conversation history.
+        adapter.persist_session(&session_id, Some("existing-conversation"), 7, Some(row));
+        adapter.sessions.clear();
+        let loaded = adapter.handle_session_load(json!(3), &json!({"sessionId": session_id}));
+        assert!(loaded.error.is_none());
+        assert_eq!(
+            loaded.result.unwrap()["configOptions"][0]["currentValue"],
+            "gemini-3.8-flash-high"
+        );
+        let (_, _, args, _, conversation, step) = adapter.prepare_prompt_state(&json!({
+            "sessionId": session_id, "prompt": [{"type": "text", "text": "hello"}],
+        }));
+        let model_index = args.iter().position(|arg| arg == "--model").unwrap();
+        assert_eq!(args[model_index + 1], "gemini-3.8-flash-high");
+        assert!(!args.iter().any(|arg| arg.contains('\t')));
+        assert_eq!(conversation.as_deref(), Some("existing-conversation"));
+        assert_eq!(step, 7);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn default_timeout_is_added_without_discarding_extra_args() {

@@ -1,0 +1,11 @@
+FROM ghcr.io/jacklau1993/openab@sha256:aa71b0029c9180b888d4f4f829d53d181edad5cfd6773c8fb82afd9f3a0998c9
+USER root
+ENV AGY_VERSION=1.4.8
+RUN curl -fsSL https://github.com/google-antigravity/antigravity-cli/releases/download/1.4.8/agy_cli_linux_x64.tar.gz -o /tmp/agy.tar.gz \
+    && echo '8b165f0fc584f0f92dd1318dc3a090706ae18aade7d36b0b8623b85aeaf86c52  /tmp/agy.tar.gz' | sha256sum -c - \
+    && tar -xzf /tmp/agy.tar.gz -C /usr/local/bin \
+    && mv /usr/local/bin/antigravity /usr/local/bin/agy \
+    && rm /tmp/agy.tar.gz \
+    && test "$(agy --version)" = '1.4.8'
+LABEL io.openab.pr-head=e1f6a7f1636d1f08ea8c2d82b7696c33378a2449
+USER agent
